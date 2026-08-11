@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -16,6 +16,7 @@ type sweeper struct {
 	arr         *arrClient
 	gracePeriod time.Duration
 	interval    time.Duration
+	log         *slog.Logger
 }
 
 func (s *sweeper) run(ctx context.Context) {
@@ -35,14 +36,23 @@ func (s *sweeper) run(ctx context.Context) {
 
 func (s *sweeper) sweepOnce() {
 	cutoff := time.Now().UTC().Add(-s.gracePeriod)
+	s.log.Debug("sweep starting", "cutoff", cutoff)
 
 	due, err := s.store.duePending(cutoff)
 	if err != nil {
-		log.Printf("sweep: query pending: %v", err)
+		s.log.Error("failed to query pending events", "error", err)
 		return
 	}
 
+	if len(due) == 0 {
+		s.log.Info("sweep complete", "due", 0, "cleaned", 0, "failed", 0)
+		return
+	}
+
+	var cleaned, failed int
 	for _, e := range due {
+		s.log.Debug("evaluating due event", "kind", e.Kind, "item_id", e.ItemID, "title", e.Title, "watched_at", e.WatchedAt)
+
 		var err error
 		switch e.Kind {
 		case kindMovie:
@@ -51,15 +61,20 @@ func (s *sweeper) sweepOnce() {
 			err = s.arr.deleteSeries(e.ItemID)
 		}
 		if err != nil {
-			log.Printf("sweep: delete %s %q (id=%s): %v", e.Kind, e.Title, e.ItemID, err)
+			s.log.Error("failed to delete via arr API, will retry next sweep", "kind", e.Kind, "item_id", e.ItemID, "title", e.Title, "error", err)
+			failed++
 			continue
 		}
 
 		if err := s.store.markActioned(e.Kind, e.ItemID, time.Now().UTC()); err != nil {
-			log.Printf("sweep: mark actioned %s %q (id=%s): %v", e.Kind, e.Title, e.ItemID, err)
+			s.log.Error("deleted but failed to mark actioned, will retry delete next sweep", "kind", e.Kind, "item_id", e.ItemID, "title", e.Title, "error", err)
+			failed++
 			continue
 		}
 
-		log.Printf("sweep: cleaned up %s %q (id=%s)", e.Kind, e.Title, e.ItemID)
+		s.log.Info("cleaned up watched item", "kind", e.Kind, "item_id", e.ItemID, "title", e.Title)
+		cleaned++
 	}
+
+	s.log.Info("sweep complete", "due", len(due), "cleaned", cleaned, "failed", failed)
 }

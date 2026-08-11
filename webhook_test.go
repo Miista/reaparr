@@ -22,7 +22,7 @@ func postWebhook(t *testing.T, h http.Handler, body string) *httptest.ResponseRe
 
 func TestWebhook_ItemMarkedPlayed_Movie_IsRecorded(t *testing.T) {
 	s := newTestStore(t)
-	h := &webhookHandler{store: s}
+	h := &webhookHandler{store: s, log: testLogger(t)}
 
 	rec := postWebhook(t, h, `{
 		"NotificationType": "ItemMarkedPlayed",
@@ -50,7 +50,7 @@ func TestWebhook_ItemMarkedPlayed_Movie_IsRecorded(t *testing.T) {
 
 func TestWebhook_ItemMarkedPlayed_Episode_UsesSeriesID(t *testing.T) {
 	s := newTestStore(t)
-	h := &webhookHandler{store: s}
+	h := &webhookHandler{store: s, log: testLogger(t)}
 
 	rec := postWebhook(t, h, `{
 		"NotificationType": "ItemMarkedPlayed",
@@ -80,7 +80,7 @@ func TestWebhook_ItemMarkedPlayed_Episode_UsesSeriesID(t *testing.T) {
 
 func TestWebhook_PlaybackStop_IncompletePlay_IsIgnored(t *testing.T) {
 	s := newTestStore(t)
-	h := &webhookHandler{store: s}
+	h := &webhookHandler{store: s, log: testLogger(t)}
 
 	rec := postWebhook(t, h, `{
 		"NotificationType": "PlaybackStop",
@@ -105,7 +105,7 @@ func TestWebhook_PlaybackStop_IncompletePlay_IsIgnored(t *testing.T) {
 
 func TestWebhook_PlaybackStop_CompletedPlay_IsRecorded(t *testing.T) {
 	s := newTestStore(t)
-	h := &webhookHandler{store: s}
+	h := &webhookHandler{store: s, log: testLogger(t)}
 
 	rec := postWebhook(t, h, `{
 		"NotificationType": "PlaybackStop",
@@ -130,7 +130,7 @@ func TestWebhook_PlaybackStop_CompletedPlay_IsRecorded(t *testing.T) {
 
 func TestWebhook_UnrelatedNotificationType_IsIgnored(t *testing.T) {
 	s := newTestStore(t)
-	h := &webhookHandler{store: s}
+	h := &webhookHandler{store: s, log: testLogger(t)}
 
 	rec := postWebhook(t, h, `{"NotificationType": "UserLoggedIn"}`)
 
@@ -149,7 +149,7 @@ func TestWebhook_UnrelatedNotificationType_IsIgnored(t *testing.T) {
 
 func TestWebhook_UnknownItemType_IsIgnored(t *testing.T) {
 	s := newTestStore(t)
-	h := &webhookHandler{store: s}
+	h := &webhookHandler{store: s, log: testLogger(t)}
 
 	rec := postWebhook(t, h, `{
 		"NotificationType": "ItemMarkedPlayed",
@@ -173,7 +173,7 @@ func TestWebhook_UnknownItemType_IsIgnored(t *testing.T) {
 
 func TestWebhook_InvalidJSON_Returns400(t *testing.T) {
 	s := newTestStore(t)
-	h := &webhookHandler{store: s}
+	h := &webhookHandler{store: s, log: testLogger(t)}
 
 	rec := postWebhook(t, h, `not json`)
 
@@ -184,7 +184,7 @@ func TestWebhook_InvalidJSON_Returns400(t *testing.T) {
 
 func TestWebhook_GetMethod_Returns405(t *testing.T) {
 	s := newTestStore(t)
-	h := &webhookHandler{store: s}
+	h := &webhookHandler{store: s, log: testLogger(t)}
 
 	req := httptest.NewRequest(http.MethodGet, "/webhook/jellyfin", nil)
 	rec := httptest.NewRecorder()

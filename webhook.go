@@ -3,16 +3,16 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 )
 
 // jellyfinPlayedPayload is a best-guess shape based on the official Jellyfin
 // Webhook plugin's documented template variables. NOT yet verified against a
-// real payload — the plugin isn't installed yet as of this writing. Every
-// request is logged in full below so the real shape can be confirmed and
-// this struct corrected before relying on it.
+// real payload — the plugin isn't installed yet as of this writing. The raw
+// body is logged at debug level unconditionally so the real shape can be
+// confirmed and this struct corrected before relying on it.
 type jellyfinPlayedPayload struct {
 	NotificationType string `json:"NotificationType"`
 	ItemType         string `json:"ItemType"` // "Movie" or "Episode"
@@ -26,34 +26,38 @@ type jellyfinPlayedPayload struct {
 
 type webhookHandler struct {
 	store *store
+	log   *slog.Logger
 }
 
 func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		h.log.Warn("rejected non-POST request", "method", r.Method, "remote_addr", r.RemoteAddr)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		h.log.Error("failed to read request body", "error", err)
 		http.Error(w, "read body", http.StatusBadRequest)
 		return
 	}
-	// Logged unconditionally until the real payload shape is confirmed
-	// against an installed Webhook plugin (see watch-cleanup-tool-plan.md).
-	log.Printf("webhook payload: %s", body)
+	h.log.Debug("received payload", "body", string(body))
 
 	var payload jellyfinPlayedPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
+		h.log.Error("invalid JSON payload", "error", err, "body", string(body))
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
 
 	if payload.NotificationType != "PlaybackStop" && payload.NotificationType != "ItemMarkedPlayed" {
+		h.log.Debug("ignoring notification", "reason", "unrelated notification type", "notification_type", payload.NotificationType)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	if !payload.PlayedToComplete && payload.NotificationType == "PlaybackStop" {
+		h.log.Info("ignoring notification", "reason", "playback not completed", "item_type", payload.ItemType, "title", payload.Name)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -73,6 +77,7 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Title:  payload.SeriesName,
 		}
 	default:
+		h.log.Warn("ignoring notification", "reason", "unhandled item type", "item_type", payload.ItemType, "title", payload.Name)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -80,10 +85,11 @@ func (h *webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	event.WatchedAt = time.Now().UTC()
 
 	if err := h.store.recordWatched(event); err != nil {
-		log.Printf("record watched event: %v", err)
+		h.log.Error("failed to record watched event", "error", err, "kind", event.Kind, "item_id", event.ItemID, "title", event.Title)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
+	h.log.Info("recorded watched event", "kind", event.Kind, "item_id", event.ItemID, "title", event.Title, "user", event.User)
 	w.WriteHeader(http.StatusOK)
 }

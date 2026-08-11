@@ -17,6 +17,7 @@ func newTestArrClient(t *testing.T, handler http.HandlerFunc) (*arrClient, *http
 		sonarrURL:    srv.URL,
 		sonarrAPIKey: "sonarr-key",
 		httpClient:   srv.Client(),
+		log:          testLogger(t),
 	}, srv
 }
 

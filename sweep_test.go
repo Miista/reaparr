@@ -23,8 +23,8 @@ func TestSweepOnce_DeletesDueMovieAndMarksActioned(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	arr := &arrClient{radarrURL: srv.URL, radarrAPIKey: "k", sonarrURL: srv.URL, sonarrAPIKey: "k", httpClient: srv.Client()}
-	sw := &sweeper{store: s, arr: arr, gracePeriod: 24 * time.Hour}
+	arr := &arrClient{radarrURL: srv.URL, radarrAPIKey: "k", sonarrURL: srv.URL, sonarrAPIKey: "k", httpClient: srv.Client(), log: testLogger(t)}
+	sw := &sweeper{store: s, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -56,8 +56,8 @@ func TestSweepOnce_LeavesNotYetDueEventsAlone(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	arr := &arrClient{radarrURL: srv.URL, radarrAPIKey: "k", sonarrURL: srv.URL, sonarrAPIKey: "k", httpClient: srv.Client()}
-	sw := &sweeper{store: s, arr: arr, gracePeriod: 7 * 24 * time.Hour}
+	arr := &arrClient{radarrURL: srv.URL, radarrAPIKey: "k", sonarrURL: srv.URL, sonarrAPIKey: "k", httpClient: srv.Client(), log: testLogger(t)}
+	sw := &sweeper{store: s, arr: arr, gracePeriod: 7 * 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -81,8 +81,8 @@ func TestSweepOnce_FailedDeleteLeavesEventPending(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	arr := &arrClient{radarrURL: srv.URL, radarrAPIKey: "k", sonarrURL: srv.URL, sonarrAPIKey: "k", httpClient: srv.Client()}
-	sw := &sweeper{store: s, arr: arr, gracePeriod: 24 * time.Hour}
+	arr := &arrClient{radarrURL: srv.URL, radarrAPIKey: "k", sonarrURL: srv.URL, sonarrAPIKey: "k", httpClient: srv.Client(), log: testLogger(t)}
+	sw := &sweeper{store: s, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -114,8 +114,8 @@ func TestSweepOnce_RoutesSeriesToSonarr(t *testing.T) {
 	}))
 	defer sonarrSrv.Close()
 
-	arr := &arrClient{radarrURL: radarrSrv.URL, radarrAPIKey: "k", sonarrURL: sonarrSrv.URL, sonarrAPIKey: "k", httpClient: sonarrSrv.Client()}
-	sw := &sweeper{store: s, arr: arr, gracePeriod: 24 * time.Hour}
+	arr := &arrClient{radarrURL: radarrSrv.URL, radarrAPIKey: "k", sonarrURL: sonarrSrv.URL, sonarrAPIKey: "k", httpClient: sonarrSrv.Client(), log: testLogger(t)}
+	sw := &sweeper{store: s, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 

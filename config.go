@@ -9,6 +9,7 @@ import (
 type config struct {
 	ListenAddr    string
 	DBPath        string
+	LogLevel      string
 	GracePeriod   time.Duration
 	SweepInterval time.Duration
 
@@ -18,10 +19,29 @@ type config struct {
 	SonarrAPIKey string
 }
 
+// logAttrs returns the config as slog fields for the startup log line. API
+// keys are redacted to a presence check — never logged in full, even at
+// debug level, since these are live credentials for services that can
+// delete files.
+func (c config) logAttrs() []any {
+	return []any{
+		"listen_addr", c.ListenAddr,
+		"db_path", c.DBPath,
+		"log_level", c.LogLevel,
+		"grace_period", c.GracePeriod.String(),
+		"sweep_interval", c.SweepInterval.String(),
+		"radarr_url", c.RadarrURL,
+		"radarr_api_key_set", c.RadarrAPIKey != "",
+		"sonarr_url", c.SonarrURL,
+		"sonarr_api_key_set", c.SonarrAPIKey != "",
+	}
+}
+
 func loadConfig() (config, error) {
 	cfg := config{
 		ListenAddr:   envOr("LISTEN_ADDR", ":8080"),
 		DBPath:       envOr("DB_PATH", "/data/watch-cleanup.db"),
+		LogLevel:     envOr("LOG_LEVEL", "info"),
 		RadarrURL:    envOr("RADARR_URL", "http://radarr:7878"),
 		SonarrURL:    envOr("SONARR_URL", "http://sonarr:8989"),
 		RadarrAPIKey: os.Getenv("RADARR_API_KEY"),
