@@ -1,0 +1,5 @@
+/watch-cleanup-tool
+/data/
+*.db
+*.db-shm
+*.db-wal
