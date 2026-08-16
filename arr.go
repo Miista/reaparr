@@ -8,7 +8,7 @@ import (
 )
 
 // arrClient talks to Radarr/Sonarr only. It must never be given
-// qBittorrent credentials or access — see watch-cleanup-tool-plan.md's
+// qBittorrent credentials or access — see plan.md's
 // deletion-scope decision. Deleting the Radarr/Sonarr-side file only drops
 // one of two hardlinks; the downloads-side copy and its seed are untouched.
 type arrClient struct {

@@ -12,7 +12,7 @@ import (
 // Jellyfin for currently-played items (recording/refreshing their watched
 // state), then cleaning up anything past its grace period via
 // Radarr/Sonarr. Polling replaces the earlier webhook-listener design —
-// see watch-cleanup-tool-plan.md's Architecture section — so there is no
+// see plan.md's Architecture section — so there is no
 // separate always-on HTTP listener; this is the entire program.
 type sweeper struct {
 	store       *store

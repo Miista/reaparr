@@ -1,5 +1,3 @@
-/watch-cleanup-tool
+/purgarr
 /data/
-*.db
-*.db-shm
-*.db-wal
+purgarr.json

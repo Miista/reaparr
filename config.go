@@ -51,7 +51,7 @@ var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month 
 
 func loadConfig() (config, error) {
 	cfg := config{
-		StorePath:       envOr("STORE_PATH", "/data/watch-cleanup.json"),
+		StorePath:       envOr("STORE_PATH", "/data/purgarr.json"),
 		LogLevel:        envOr("LOG_LEVEL", "info"),
 		PollScheduleRaw: envOr("POLL_SCHEDULE", "@hourly"),
 		JellyfinURL:     envOr("JELLYFIN_URL", "http://jellyfin:8096"),

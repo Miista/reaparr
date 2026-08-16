@@ -1,4 +1,4 @@
-module github.com/Miista/watch-cleanup-tool
+module github.com/Miista/purgarr
 
 go 1.26.5
 

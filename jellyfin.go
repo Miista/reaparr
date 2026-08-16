@@ -10,7 +10,7 @@ import (
 
 // jellyfinClient polls Jellyfin for played items. Auto-discovers users via
 // /Users rather than requiring a configured list — see the "either account"
-// trigger condition in watch-cleanup-tool-plan.md: any account's played
+// trigger condition in plan.md: any account's played
 // state is sufficient, so there is no meaningful subset of users to
 // exclude in a household deployment.
 type jellyfinClient struct {

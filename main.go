@@ -1,7 +1,7 @@
-// watch-cleanup-tool: polls Jellyfin on a cron schedule for played items,
+// purgarr: polls Jellyfin on a cron schedule for played items,
 // and after a configurable grace period, unmonitors + deletes the
 // corresponding Radarr/Sonarr item. Never touches qBittorrent — see
-// watch-cleanup-tool-plan.md. No HTTP surface — this is a background
+// plan.md. No HTTP surface — this is a background
 // process only.
 package main
 
@@ -26,7 +26,7 @@ func main() {
 
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
-	logger.Info("starting watch-cleanup-tool", cfg.logAttrs()...)
+	logger.Info("starting purgarr", cfg.logAttrs()...)
 
 	store, err := openStore(cfg.StorePath)
 	if err != nil {
