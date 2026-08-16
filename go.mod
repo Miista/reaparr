@@ -1,4 +1,4 @@
-module github.com/Miista/purgarr
+module github.com/Miista/reaparr
 
 go 1.26.5
 

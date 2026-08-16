@@ -1,4 +1,4 @@
-# Purgarr
+# Reaparr
 
 Polls Jellyfin for watched titles and, after a grace period, deletes them via
 Radarr/Sonarr — for households that watch content once and don't build a
@@ -7,7 +7,7 @@ collection, instead of accumulating a library indefinitely like a typical
 
 ## How it works
 
-On a configurable schedule, Purgarr:
+On a configurable schedule, Reaparr:
 
 1. Queries every Jellyfin user account for played movies/episodes
    (`/Users/{id}/Items?Filters=IsPlayed`). Any one account having watched a
@@ -24,7 +24,7 @@ release.
 
 ## What it will never do
 
-Purgarr only ever talks to Jellyfin (read-only) and Radarr/Sonarr (delete).
+Reaparr only ever talks to Jellyfin (read-only) and Radarr/Sonarr (delete).
 It is never given qBittorrent credentials or network access, and it never
 touches qBittorrent directly. Because Radarr/Sonarr import via hardlink,
 deleting the Radarr/Sonarr-side copy only drops one of two links — the
@@ -46,7 +46,7 @@ All configuration is via environment variables.
 | `SONARR_API_KEY` | — (required) | Sonarr API key |
 | `GRACE_PERIOD_DAYS` | `7` | Days after watching before a title is deleted |
 | `POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to poll Jellyfin and sweep for due deletions |
-| `STORE_PATH` | `/data/purgarr.json` | Path to the persisted watched-state file |
+| `STORE_PATH` | `/data/reaparr.json` | Path to the persisted watched-state file |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 
 The grace period exists to protect against a premature or mistaken
@@ -55,15 +55,15 @@ notices something's wrong.
 
 ## Deployment
 
-Purgarr is a single static binary with no HTTP surface — it's a background
+Reaparr is a single static binary with no HTTP surface — it's a background
 process only, no ports to expose. It needs network access to Jellyfin and
 Radarr/Sonarr, and a volume mount for `STORE_PATH` so watched-state
 survives restarts. It must **not** be given access to qBittorrent or its
 network, per the design above.
 
 ```yaml
-purgarr:
-  build: ./purgarr
+reaparr:
+  build: ./reaparr
   environment:
     JELLYFIN_URL: http://jellyfin:8096
     JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}
@@ -71,7 +71,7 @@ purgarr:
     SONARR_API_KEY: ${SONARR_API_KEY}
     GRACE_PERIOD_DAYS: "7"
   volumes:
-    - ./purgarr/data:/data
+    - ./reaparr/data:/data
   networks:
     - media
 ```
@@ -81,7 +81,7 @@ purgarr:
 ```sh
 go test ./... -race
 go build .
-docker build -t purgarr .
+docker build -t reaparr .
 ```
 
 See `plan.md` for the original design rationale and decisions.

@@ -1,4 +1,4 @@
-// purgarr: polls Jellyfin on a cron schedule for played items,
+// reaparr: polls Jellyfin on a cron schedule for played items,
 // and after a configurable grace period, unmonitors + deletes the
 // corresponding Radarr/Sonarr item. Never touches qBittorrent — see
 // plan.md. No HTTP surface — this is a background
@@ -26,7 +26,7 @@ func main() {
 
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
-	logger.Info("starting purgarr", cfg.logAttrs()...)
+	logger.Info("starting reaparr", cfg.logAttrs()...)
 
 	store, err := openStore(cfg.StorePath)
 	if err != nil {

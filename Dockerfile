@@ -3,9 +3,9 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /purgarr .
+RUN CGO_ENABLED=0 go build -o /reaparr .
 
 FROM gcr.io/distroless/static-debian12
-COPY --from=build /purgarr /purgarr
+COPY --from=build /reaparr /reaparr
 VOLUME /data
-ENTRYPOINT ["/purgarr"]
+ENTRYPOINT ["/reaparr"]
