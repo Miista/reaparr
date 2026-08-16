@@ -59,15 +59,14 @@ func loadConfig() (config, error) {
 		SonarrAPIKey:    os.Getenv("SONARR_API_KEY"),
 	}
 
-	// A plain Go duration string ("45m", "6h", "168h", ...) rather than a
-	// day-count — Go's time.Duration has no Day unit, so multi-day periods
-	// are just larger hour counts (7 days = "168h"). Accepted this way
-	// (rather than a cron expression like POLL_SCHEDULE) because a grace
-	// period is a span of time from a reference point, not a recurring
-	// schedule — cron expressions don't express "wait this long", only
-	// "run at these moments".
-	graceRaw := envOr("GRACE_PERIOD", "168h")
-	grace, err := time.ParseDuration(graceRaw)
+	// A Go duration string extended with "d"/"w" suffixes (see
+	// parseGracePeriod) — e.g. "7d", "168h", "45m" are all valid. Accepted
+	// this way (rather than a cron expression like POLL_SCHEDULE) because a
+	// grace period is a span of time from a reference point, not a
+	// recurring schedule — cron expressions don't express "wait this
+	// long", only "run at these moments".
+	graceRaw := envOr("GRACE_PERIOD", "7d")
+	grace, err := parseGracePeriod(graceRaw)
 	if err != nil {
 		return cfg, fmt.Errorf("invalid GRACE_PERIOD %q: %w", graceRaw, err)
 	}

@@ -1,34 +1,55 @@
 # Reaparr
 
-Polls Jellyfin for watched titles and, after a grace period, deletes them via
-Radarr/Sonarr — for households that watch content once and don't build a
-collection, instead of accumulating a library indefinitely like a typical
-*arr setup assumes.
+Reaparr watches Jellyfin on a schedule and, once a title has actually been
+finished and enough time has passed, deletes it via Radarr/Sonarr — for
+households that watch content once and don't build a collection, instead of
+accumulating a library indefinitely like a typical *arr setup assumes.
 
 ## How it works
 
-On a configurable schedule, Reaparr:
+Reaparr is entirely stateless — it keeps no store, no persisted file, and no
+memory of any previous sweep. Every sweep is a fresh, complete pass over live
+Jellyfin data. Restarting the container is a safe, complete reset.
 
-1. Queries every Jellyfin user account for played movies/episodes
-   (`/Users/{id}/Items?Filters=IsPlayed`). Any one account having watched a
-   title is enough to mark it for cleanup — this doesn't require every
-   account on the server to have watched it.
-2. Records each title's watched timestamp (Jellyfin's own
-   `LastPlayedDate`) in a local JSON file, keyed by movie/series ID.
-3. Once a title has been watched for longer than the configured grace
-   period, deletes it via the Radarr or Sonarr API (`deleteFiles=true`).
+On a configurable cron schedule, each sweep:
 
-TV shows are cleaned up at the series level — a season pack is treated as
-one unit, matching how Sonarr/qBittorrent already track it as a single
-release.
+1. Asks Jellyfin's Activity Log for every item whose most recent
+   `VideoPlaybackStopped` event is older than the grace period (set A).
+   `VideoPlaybackStopped` fires on any stop, including someone quitting
+   partway through, so this alone doesn't mean "finished."
+2. Asks every Jellyfin user account for the movies/episodes they currently
+   have marked `Played=true` (set B). Any one account having watched a title
+   is enough — it doesn't require every account on the server to agree.
+3. Acts only on the intersection, A ∩ B: items that are both currently fully
+   played AND stopped playing a while ago. Because B is re-checked live every
+   sweep, a title that gets unplayed again (started, abandoned, `Played`
+   flips back to false) simply stops appearing in B and is never touched —
+   there is nothing stored to go stale.
+
+For each item in the intersection, Reaparr resolves it to Radarr/Sonarr's own
+internal ID before deleting:
+
+- **Movies** resolve to Radarr via the item's TMDB ID.
+- **Episodes** resolve to Sonarr via the *parent series'* TVDB ID (not the
+  episode's own TVDB ID) — Sonarr tracks and deletes at the series level, so
+  a season pack is treated as one unit, matching how Sonarr already tracks
+  it as a single release.
+
+If an item can't be matched into Radarr or Sonarr (e.g. missing provider ID,
+or Radarr/Sonarr simply doesn't track that title), it's logged as a warning
+and skipped — not retried as an error. A genuine lookup or delete failure
+(e.g. Radarr/Sonarr unreachable) is logged as an error and naturally
+retried on the next sweep, since there's no state marking it as "handled."
 
 ## What it will never do
 
 Reaparr only ever talks to Jellyfin (read-only) and Radarr/Sonarr (delete).
-It is never given qBittorrent credentials or network access, and it never
-touches qBittorrent directly. Because Radarr/Sonarr import via hardlink,
-deleting the Radarr/Sonarr-side copy only drops one of two links — the
-downloads-side copy and its seed continue independently, until
+It is never given qBittorrent credentials or network access, and never
+touches qBittorrent or Jellyfin's own library directly.
+
+Radarr/Sonarr import media via hardlink, so deleting the Radarr/Sonarr-side
+file only drops one of two hardlinks — the downloads-side copy and its
+ongoing seed are left completely untouched, continuing independently until
 qBittorrent's own seeding-limit policy removes it on its own schedule. The
 two cleanup paths stay fully decoupled by design.
 
@@ -44,22 +65,23 @@ All configuration is via environment variables.
 | `RADARR_API_KEY` | — (required) | Radarr API key |
 | `SONARR_URL` | `http://sonarr:8989` | Sonarr base URL |
 | `SONARR_API_KEY` | — (required) | Sonarr API key |
-| `GRACE_PERIOD_DAYS` | `7` | Days after watching before a title is deleted |
-| `POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to poll Jellyfin and sweep for due deletions |
-| `STORE_PATH` | `/data/reaparr.json` | Path to the persisted watched-state file |
+| `GRACE_PERIOD` | `7d` | How long after the last `VideoPlaybackStopped` event a still-played title must wait before deletion. Accepts Go duration strings (`45m`, `6h`, `168h`, `1h30m`) plus `d` (days) and `w` (weeks) suffixes — e.g. `7d`, `2w`. Fractional day/week values are allowed (e.g. `1.5d`). Months are deliberately unsupported since they aren't a fixed length. |
+| `POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 
-The grace period exists to protect against a premature or mistaken
-"played" flag (e.g. skipping credits) triggering deletion before anyone
-notices something's wrong.
+The grace period exists to protect against a premature or mistaken "played"
+flag (e.g. skipping credits) triggering deletion before anyone notices
+something's wrong.
+
+API keys are never logged in full, even at debug level — only a
+present/absent flag.
 
 ## Deployment
 
-Reaparr is a single static binary with no HTTP surface — it's a background
-process only, no ports to expose. It needs network access to Jellyfin and
-Radarr/Sonarr, and a volume mount for `STORE_PATH` so watched-state
-survives restarts. It must **not** be given access to qBittorrent or its
-network, per the design above.
+Reaparr is a single static binary with no HTTP surface and no persisted
+state — it's a background process only, with no ports to expose and no
+volumes to mount. It needs network access to Jellyfin and Radarr/Sonarr, and
+must **not** be given access to qBittorrent or its network.
 
 ```yaml
 reaparr:
@@ -67,13 +89,15 @@ reaparr:
   environment:
     JELLYFIN_URL: http://jellyfin:8096
     JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}
+    RADARR_URL: http://radarr:7878
     RADARR_API_KEY: ${RADARR_API_KEY}
+    SONARR_URL: http://sonarr:8989
     SONARR_API_KEY: ${SONARR_API_KEY}
-    GRACE_PERIOD_DAYS: "7"
-  volumes:
-    - ./reaparr/data:/data
+    GRACE_PERIOD: 7d
+    POLL_SCHEDULE: "@hourly"
   networks:
     - media
+  restart: unless-stopped
 ```
 
 ## Development
@@ -84,4 +108,12 @@ go build .
 docker build -t reaparr .
 ```
 
-See `plan.md` for the original design rationale and decisions.
+## Design history
+
+`plan.md` documents the *original* design rationale (a webhook-driven
+listener feeding a persisted store) and the reasoning behind decisions like
+the grace period and the qBittorrent exclusion. That architecture has since
+been completely replaced by the stateless, poll-and-intersect sweep
+described above — treat `plan.md` as historical context for *why*, not as a
+reference for *how it currently works*. This README and the source files are
+authoritative for current behavior.

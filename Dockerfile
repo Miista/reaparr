@@ -7,5 +7,4 @@ RUN CGO_ENABLED=0 go build -o /reaparr .
 
 FROM gcr.io/distroless/static-debian12
 COPY --from=build /reaparr /reaparr
-VOLUME /data
 ENTRYPOINT ["/reaparr"]
