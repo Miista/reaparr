@@ -4,14 +4,20 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/robfig/cron/v3"
 )
 
 type config struct {
-	ListenAddr    string
-	DBPath        string
-	LogLevel      string
-	GracePeriod   time.Duration
-	SweepInterval time.Duration
+	StorePath   string
+	LogLevel    string
+	GracePeriod time.Duration
+
+	PollScheduleRaw string
+	PollSchedule    cron.Schedule
+
+	JellyfinURL    string
+	JellyfinAPIKey string
 
 	RadarrURL    string
 	RadarrAPIKey string
@@ -25,11 +31,12 @@ type config struct {
 // delete files.
 func (c config) logAttrs() []any {
 	return []any{
-		"listen_addr", c.ListenAddr,
-		"db_path", c.DBPath,
+		"store_path", c.StorePath,
 		"log_level", c.LogLevel,
 		"grace_period", c.GracePeriod.String(),
-		"sweep_interval", c.SweepInterval.String(),
+		"poll_schedule", c.PollScheduleRaw,
+		"jellyfin_url", c.JellyfinURL,
+		"jellyfin_api_key_set", c.JellyfinAPIKey != "",
 		"radarr_url", c.RadarrURL,
 		"radarr_api_key_set", c.RadarrAPIKey != "",
 		"sonarr_url", c.SonarrURL,
@@ -37,15 +44,22 @@ func (c config) logAttrs() []any {
 	}
 }
 
+// cronParser accepts both standard 5-field cron expressions and the
+// "@hourly"/"@daily"/etc descriptors — POLL_SCHEDULE is meant to be set by
+// a human, and the descriptors are the readable common case.
+var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+
 func loadConfig() (config, error) {
 	cfg := config{
-		ListenAddr:   envOr("LISTEN_ADDR", ":8080"),
-		DBPath:       envOr("DB_PATH", "/data/watch-cleanup.db"),
-		LogLevel:     envOr("LOG_LEVEL", "info"),
-		RadarrURL:    envOr("RADARR_URL", "http://radarr:7878"),
-		SonarrURL:    envOr("SONARR_URL", "http://sonarr:8989"),
-		RadarrAPIKey: os.Getenv("RADARR_API_KEY"),
-		SonarrAPIKey: os.Getenv("SONARR_API_KEY"),
+		StorePath:       envOr("STORE_PATH", "/data/watch-cleanup.json"),
+		LogLevel:        envOr("LOG_LEVEL", "info"),
+		PollScheduleRaw: envOr("POLL_SCHEDULE", "@hourly"),
+		JellyfinURL:     envOr("JELLYFIN_URL", "http://jellyfin:8096"),
+		JellyfinAPIKey:  os.Getenv("JELLYFIN_API_KEY"),
+		RadarrURL:       envOr("RADARR_URL", "http://radarr:7878"),
+		SonarrURL:       envOr("SONARR_URL", "http://sonarr:8989"),
+		RadarrAPIKey:    os.Getenv("RADARR_API_KEY"),
+		SonarrAPIKey:    os.Getenv("SONARR_API_KEY"),
 	}
 
 	graceDays := envOr("GRACE_PERIOD_DAYS", "7")
@@ -55,13 +69,15 @@ func loadConfig() (config, error) {
 	}
 	cfg.GracePeriod = time.Duration(days) * 24 * time.Hour
 
-	sweepMinutes := envOr("SWEEP_INTERVAL_MINUTES", "60")
-	var minutes int
-	if _, err := fmt.Sscanf(sweepMinutes, "%d", &minutes); err != nil {
-		return cfg, fmt.Errorf("invalid SWEEP_INTERVAL_MINUTES %q: %w", sweepMinutes, err)
+	schedule, err := cronParser.Parse(cfg.PollScheduleRaw)
+	if err != nil {
+		return cfg, fmt.Errorf("invalid POLL_SCHEDULE %q: %w", cfg.PollScheduleRaw, err)
 	}
-	cfg.SweepInterval = time.Duration(minutes) * time.Minute
+	cfg.PollSchedule = schedule
 
+	if cfg.JellyfinAPIKey == "" {
+		return cfg, fmt.Errorf("JELLYFIN_API_KEY is required")
+	}
 	if cfg.RadarrAPIKey == "" {
 		return cfg, fmt.Errorf("RADARR_API_KEY is required")
 	}
