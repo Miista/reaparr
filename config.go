@@ -9,7 +9,6 @@ import (
 )
 
 type config struct {
-	StorePath   string
 	LogLevel    string
 	GracePeriod time.Duration
 
@@ -31,7 +30,6 @@ type config struct {
 // delete files.
 func (c config) logAttrs() []any {
 	return []any{
-		"store_path", c.StorePath,
 		"log_level", c.LogLevel,
 		"grace_period", c.GracePeriod.String(),
 		"poll_schedule", c.PollScheduleRaw,
@@ -51,7 +49,6 @@ var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month 
 
 func loadConfig() (config, error) {
 	cfg := config{
-		StorePath:       envOr("STORE_PATH", "/data/reaparr.json"),
 		LogLevel:        envOr("LOG_LEVEL", "info"),
 		PollScheduleRaw: envOr("POLL_SCHEDULE", "@hourly"),
 		JellyfinURL:     envOr("JELLYFIN_URL", "http://jellyfin:8096"),
@@ -62,12 +59,19 @@ func loadConfig() (config, error) {
 		SonarrAPIKey:    os.Getenv("SONARR_API_KEY"),
 	}
 
-	graceDays := envOr("GRACE_PERIOD_DAYS", "7")
-	var days int
-	if _, err := fmt.Sscanf(graceDays, "%d", &days); err != nil {
-		return cfg, fmt.Errorf("invalid GRACE_PERIOD_DAYS %q: %w", graceDays, err)
+	// A plain Go duration string ("45m", "6h", "168h", ...) rather than a
+	// day-count — Go's time.Duration has no Day unit, so multi-day periods
+	// are just larger hour counts (7 days = "168h"). Accepted this way
+	// (rather than a cron expression like POLL_SCHEDULE) because a grace
+	// period is a span of time from a reference point, not a recurring
+	// schedule — cron expressions don't express "wait this long", only
+	// "run at these moments".
+	graceRaw := envOr("GRACE_PERIOD", "168h")
+	grace, err := time.ParseDuration(graceRaw)
+	if err != nil {
+		return cfg, fmt.Errorf("invalid GRACE_PERIOD %q: %w", graceRaw, err)
 	}
-	cfg.GracePeriod = time.Duration(days) * 24 * time.Hour
+	cfg.GracePeriod = grace
 
 	schedule, err := cronParser.Parse(cfg.PollScheduleRaw)
 	if err != nil {

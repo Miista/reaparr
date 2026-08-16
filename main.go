@@ -1,8 +1,9 @@
-// reaparr: polls Jellyfin on a cron schedule for played items,
-// and after a configurable grace period, unmonitors + deletes the
-// corresponding Radarr/Sonarr item. Never touches qBittorrent — see
-// plan.md. No HTTP surface — this is a background
-// process only.
+// reaparr: on a cron schedule, checks Jellyfin's activity log and current
+// watched state to find fully-played titles whose grace period has
+// elapsed, then deletes them via Radarr/Sonarr. Never touches qBittorrent
+// or Jellyfin's own library — see plan.md. Entirely stateless: every
+// sweep is a fresh, complete pass with nothing remembered from the last
+// one, and no HTTP surface — this is a background process only.
 package main
 
 import (
@@ -28,12 +29,6 @@ func main() {
 	slog.SetDefault(logger)
 	logger.Info("starting reaparr", cfg.logAttrs()...)
 
-	store, err := openStore(cfg.StorePath)
-	if err != nil {
-		logger.Error("failed to open store", "error", err)
-		os.Exit(1)
-	}
-
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 
 	jellyfin := &jellyfinClient{
@@ -53,7 +48,6 @@ func main() {
 	}
 
 	sweeper := &sweeper{
-		store:       store,
 		jellyfin:    jellyfin,
 		arr:         arr,
 		gracePeriod: cfg.GracePeriod,

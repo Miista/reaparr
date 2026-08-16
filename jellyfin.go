@@ -8,11 +8,11 @@ import (
 	"time"
 )
 
-// jellyfinClient polls Jellyfin for played items. Auto-discovers users via
-// /Users rather than requiring a configured list — see the "either account"
-// trigger condition in plan.md: any account's played
-// state is sufficient, so there is no meaningful subset of users to
-// exclude in a household deployment.
+// jellyfinClient polls Jellyfin for played items and playback-stopped
+// activity. Auto-discovers users via /Users rather than requiring a
+// configured list — see the "either account" trigger condition in
+// plan.md: any account's played state is sufficient, so there is no
+// meaningful subset of users to exclude in a household deployment.
 type jellyfinClient struct {
 	baseURL    string
 	apiKey     string
@@ -26,22 +26,57 @@ type jellyfinUser struct {
 }
 
 type jellyfinItem struct {
-	ID         string           `json:"Id"`
-	Name       string           `json:"Name"`
-	Type       string           `json:"Type"` // "Movie" or "Episode"
-	SeriesID   string           `json:"SeriesId"`
-	SeriesName string           `json:"SeriesName"`
-	UserData   jellyfinUserData `json:"UserData"`
+	ID          string            `json:"Id"`
+	Name        string            `json:"Name"`
+	Type        string            `json:"Type"` // "Movie" or "Episode"
+	SeriesID    string            `json:"SeriesId"`
+	SeriesName  string            `json:"SeriesName"`
+	ProviderIds jellyfinProviders `json:"ProviderIds"`
+	UserData    jellyfinUserData  `json:"UserData"`
+}
+
+// jellyfinProviders are the external-database IDs Jellyfin tracks for an
+// item. These are the join key back to Radarr/Sonarr: Jellyfin's own
+// internal item ID means nothing to Radarr/Sonarr, but TMDB/TVDB IDs are
+// shared across all three. A movie's own Tmdb ID is used directly; an
+// episode only carries the Tvdb ID of the *episode* itself, not the
+// series, so episodes require a follow-up lookup of the series item for
+// its Tvdb ID (matching Sonarr, which tracks series-level, not per-episode).
+type jellyfinProviders struct {
+	Tmdb string `json:"Tmdb"`
+	Tvdb string `json:"Tvdb"`
+	Imdb string `json:"Imdb"`
 }
 
 type jellyfinUserData struct {
-	Played         bool   `json:"Played"`
-	LastPlayedDate string `json:"LastPlayedDate"`
+	Played bool `json:"Played"`
 }
 
 type jellyfinItemsResponse struct {
 	Items []jellyfinItem `json:"Items"`
 }
+
+// jellyfinActivityEntry is one row from the Activity Log. Deliberately
+// minimal — only what's needed to find playback-stop events and which item
+// they belong to.
+type jellyfinActivityEntry struct {
+	Type   string    `json:"Type"`
+	ItemID string    `json:"ItemId"`
+	Date   time.Time `json:"Date"`
+}
+
+type jellyfinActivityResponse struct {
+	Items            []jellyfinActivityEntry `json:"Items"`
+	TotalRecordCount int                     `json:"TotalRecordCount"`
+}
+
+const activityLogPageSize = 200
+
+// activityLogTypeVideoPlaybackStopped is the only event type reaparr cares
+// about: it fires whenever any playback session ends, for any reason
+// (finished, abandoned, disconnected) — see stoppedBeforeCutoff's doc
+// comment for why that ambiguity is fine here.
+const activityLogTypeVideoPlaybackStopped = "VideoPlaybackStopped"
 
 func (c *jellyfinClient) get(path string, out any) error {
 	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
@@ -71,12 +106,15 @@ func (c *jellyfinClient) users() ([]jellyfinUser, error) {
 	return users, nil
 }
 
-// playedItems returns every movie/episode a given user has marked played,
-// including UserData so LastPlayedDate is available as the grace-period
-// timestamp source.
+// playedItems returns every movie/episode a given user currently has
+// marked played, including ProviderIds for matching back to Radarr/Sonarr.
+// This is always live state — Jellyfin flips Played back to false if a
+// title is rewatched and abandoned partway, so re-polling every sweep
+// (rather than caching a past "watched" observation) is what makes it safe
+// to never resurrect a stale/reversed watch state.
 func (c *jellyfinClient) playedItems(userID string) ([]jellyfinItem, error) {
 	path := fmt.Sprintf(
-		"/Users/%s/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Filters=IsPlayed&Fields=SeriesId",
+		"/Users/%s/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Filters=IsPlayed&Fields=SeriesId,ProviderIds",
 		userID,
 	)
 	var resp jellyfinItemsResponse
@@ -86,18 +124,77 @@ func (c *jellyfinClient) playedItems(userID string) ([]jellyfinItem, error) {
 	return resp.Items, nil
 }
 
-// parseLastPlayedDate parses Jellyfin's ISO-8601 timestamp. Falls back to
-// "now" if missing/unparseable — an item reported as Played but with no
-// timestamp still needs a grace-period start, and "now" is the safest
-// (latest, most conservative) default rather than skipping it entirely.
-func parseLastPlayedDate(raw string, log *slog.Logger) time.Time {
-	if raw == "" {
-		return time.Now().UTC()
+// seriesTvdbID looks up a series item directly to get its own Tvdb ID — an
+// episode's own ProviderIds only carries the episode's Tvdb ID, not the
+// series'. Sonarr tracks/deletes at the series level, so this is the ID
+// that actually matters for matching.
+func (c *jellyfinClient) seriesTvdbID(seriesID string) (string, error) {
+	path := fmt.Sprintf("/Items/%s?Fields=ProviderIds", seriesID)
+	var item jellyfinItem
+	if err := c.get(path, &item); err != nil {
+		return "", err
 	}
-	t, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		log.Warn("failed to parse LastPlayedDate, defaulting to now", "raw", raw, "error", err)
-		return time.Now().UTC()
+	return item.ProviderIds.Tvdb, nil
+}
+
+// itemsStoppedBefore returns, for every item whose MOST RECENT
+// VideoPlaybackStopped activity-log event is older than cutoff, that
+// event's timestamp. An item can have multiple stop events (an abandoned
+// attempt, then a later real finish) — only the latest one reflects
+// current reality; see sweep_test.go's
+// TestSweepOnce_UsesLatestStopEvent_WhenMultipleExist for why using an
+// older one would cause premature deletion.
+//
+// The Activity Log is returned newest-first (confirmed against this
+// server), so the first VideoPlaybackStopped entry seen for a given item
+// IS its latest one — every later occurrence of that same item ID is
+// guaranteed older and can be skipped outright without comparing
+// timestamps. seenItem tracks which IDs have already been resolved so we
+// only ever record (and cutoff-check) each item once.
+//
+// This is deliberately not "the moment it finished watching" on its own —
+// VideoPlaybackStopped fires on any stop, including someone quitting
+// partway through. It only becomes meaningful once intersected against
+// Jellyfin's own live Played=true state (see sweep.go): an item only
+// matters here if it is CURRENTLY played, so a stale/aborted stop event
+// that was never followed by a real completion is naturally excluded by
+// that intersection, not by anything in this function.
+//
+// This server's Jellyfin version (confirmed via its actual tagged source,
+// not just current upstream docs) has no server-side event-type or
+// max-date filter on the Activity Log endpoint, so this fetches the whole
+// log and filters by type client-side.
+func (c *jellyfinClient) itemsStoppedBefore(cutoff time.Time) (map[string]time.Time, error) {
+	stoppedBefore := make(map[string]time.Time)
+	seenItem := make(map[string]bool)
+
+	startIndex := 0
+	for {
+		path := fmt.Sprintf("/System/ActivityLog/Entries?startIndex=%d&limit=%d", startIndex, activityLogPageSize)
+		var resp jellyfinActivityResponse
+		if err := c.get(path, &resp); err != nil {
+			return nil, fmt.Errorf("fetch activity log at offset %d: %w", startIndex, err)
+		}
+
+		for _, e := range resp.Items {
+			if e.Type != activityLogTypeVideoPlaybackStopped {
+				continue
+			}
+			if e.ItemID == "" || seenItem[e.ItemID] {
+				continue
+			}
+			seenItem[e.ItemID] = true
+
+			if e.Date.Before(cutoff) {
+				stoppedBefore[e.ItemID] = e.Date
+			}
+		}
+
+		startIndex += len(resp.Items)
+		if len(resp.Items) == 0 || startIndex >= resp.TotalRecordCount {
+			break
+		}
 	}
-	return t.UTC()
+
+	return stoppedBefore, nil
 }
