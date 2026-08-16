@@ -44,31 +44,35 @@ func (s *sweeper) run(ctx context.Context) {
 }
 
 func (s *sweeper) sweepOnce() {
-	s.log.Debug("sweep starting")
+	s.log.Info("starting a sweep: checking jellyfin for newly-watched items, then checking for anything old enough to delete")
 
 	polled, err := s.pollJellyfin()
 	if err != nil {
-		s.log.Error("failed to poll jellyfin, will retry next sweep", "error", err)
+		s.log.Error("could not reach jellyfin this sweep, will try again next time — cleanup of already-known items still proceeds below", "error", err)
 		// Deletion still proceeds below against whatever was already
 		// recorded from prior successful polls — a transient Jellyfin
 		// outage shouldn't also block cleanup of already-known items.
 	}
 
 	cutoff := time.Now().UTC().Add(-s.gracePeriod)
+	s.log.Debug("checking for items watched before this cutoff", "cutoff", cutoff, "grace_period", s.gracePeriod.String())
+
 	due, err := s.store.duePending(cutoff)
 	if err != nil {
-		s.log.Error("failed to query pending items", "error", err)
+		s.log.Error("could not read the watched-items store, aborting this sweep", "error", err)
 		return
 	}
 
 	if len(due) == 0 {
-		s.log.Info("sweep complete", "polled", polled, "due", 0, "cleaned", 0, "failed", 0)
+		s.log.Info("sweep finished: nothing is due for deletion right now", "jellyfin_items_seen_this_sweep", polled)
 		return
 	}
 
+	s.log.Info("sweep found items past their grace period, will delete them now", "count", len(due))
+
 	var cleaned, failed int
 	for _, it := range due {
-		s.log.Debug("evaluating due item", "kind", it.Kind, "item_id", it.ItemID, "title", it.Title, "watched_at", it.WatchedAt)
+		s.log.Info("deleting watched item because its grace period has passed", "kind", it.Kind, "title", it.Title, "item_id", it.ItemID, "watched_at", it.WatchedAt, "grace_period", s.gracePeriod.String())
 
 		var err error
 		switch it.Kind {
@@ -78,22 +82,22 @@ func (s *sweeper) sweepOnce() {
 			err = s.arr.deleteSeries(it.ItemID)
 		}
 		if err != nil {
-			s.log.Error("failed to delete via arr API, will retry next sweep", "kind", it.Kind, "item_id", it.ItemID, "title", it.Title, "error", err)
+			s.log.Error("delete failed, will try again next sweep — nothing was removed", "kind", it.Kind, "item_id", it.ItemID, "title", it.Title, "error", err)
 			failed++
 			continue
 		}
 
 		if err := s.store.markActioned(it.Kind, it.ItemID, time.Now().UTC()); err != nil {
-			s.log.Error("deleted but failed to mark actioned, will retry delete next sweep", "kind", it.Kind, "item_id", it.ItemID, "title", it.Title, "error", err)
+			s.log.Error("deleted successfully, but failed to record that fact — will attempt to delete it again next sweep (should be harmless, arr will just report it's already gone)", "kind", it.Kind, "item_id", it.ItemID, "title", it.Title, "error", err)
 			failed++
 			continue
 		}
 
-		s.log.Info("cleaned up watched item", "kind", it.Kind, "item_id", it.ItemID, "title", it.Title)
+		s.log.Info("successfully deleted watched item", "kind", it.Kind, "title", it.Title, "item_id", it.ItemID)
 		cleaned++
 	}
 
-	s.log.Info("sweep complete", "polled", polled, "due", len(due), "cleaned", cleaned, "failed", failed)
+	s.log.Info("sweep finished", "jellyfin_items_seen_this_sweep", polled, "items_due_for_deletion", len(due), "successfully_deleted", cleaned, "failed_to_delete", failed)
 }
 
 // pollJellyfin queries every user's played items and upserts them into the
@@ -104,6 +108,8 @@ func (s *sweeper) pollJellyfin() (int, error) {
 		return 0, err
 	}
 
+	s.log.Debug("found jellyfin users to check", "user_count", len(users))
+
 	var total int
 	for _, u := range users {
 		items, err := s.jellyfin.playedItems(u.ID)
@@ -112,11 +118,17 @@ func (s *sweeper) pollJellyfin() (int, error) {
 			continue
 		}
 
+		s.log.Debug("checked user's played items in jellyfin", "user", u.Name, "played_item_count", len(items))
+
 		for _, item := range items {
 			w, ok := watchedItemFromJellyfin(item, u.Name, s.log)
 			if !ok {
+				s.log.Debug("ignoring played item, not a movie or episode", "user", u.Name, "jellyfin_item_type", item.Type, "title", item.Name)
 				continue
 			}
+
+			s.log.Info("jellyfin says this was watched", "user", w.User, "kind", w.Kind, "title", w.Title, "item_id", w.ItemID, "watched_at", w.WatchedAt)
+
 			if err := s.store.upsertWatched(w); err != nil {
 				s.log.Error("failed to upsert watched item", "error", err, "kind", w.Kind, "item_id", w.ItemID, "title", w.Title)
 				continue
