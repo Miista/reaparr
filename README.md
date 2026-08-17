@@ -133,6 +133,17 @@ go build .
 docker build -t reaparr .
 ```
 
+## See also
+
+If you want a fuller rule engine (age, size, rating, request status, and
+more — not just watched state) with a UI, or need Plex/Emby support, look at
+[Maintainerr](https://github.com/Maintainerr/Maintainerr) instead. It's a
+heavier, stateful tool with a database and its own collection/approval
+workflow, and — unlike Reaparr — it can act on the download client directly
+rather than staying strictly decoupled from it. Reaparr is deliberately
+smaller in scope: Jellyfin-only, stateless, one policy (watched + grace
+period), and it will never touch qBittorrent.
+
 ## License
 
 [MIT](LICENSE)
