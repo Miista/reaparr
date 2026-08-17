@@ -1,5 +1,7 @@
 # Reaparr
 
+*Reaps your media once you're done with it.*
+
 Reaparr watches Jellyfin on a schedule and, once a title has actually been
 finished and enough time has passed, deletes it via Radarr/Sonarr — for
 households that watch content once and don't build a collection, instead of
