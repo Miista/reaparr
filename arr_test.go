@@ -203,3 +203,54 @@ func TestFindSeriesByTvdbID_MatchesOnTvdbID(t *testing.T) {
 		t.Fatalf("expected sonarr id 7, got %d", series.ID)
 	}
 }
+
+// This is the precondition for Reaparr's entire "downloads copy stays
+// untouched" guarantee: if Radarr/Sonarr aren't configured to use
+// hardlinks, deleting via their API deletes the only copy of the file.
+func TestRadarrUsesHardlinks_ReflectsCopyUsingHardlinksSetting(t *testing.T) {
+	client, _ := newTestArrClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/config/mediamanagement" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: true})
+	})
+
+	ok, err := client.radarrUsesHardlinks()
+	if err != nil {
+		t.Fatalf("radarrUsesHardlinks: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected true when copyUsingHardlinks is true")
+	}
+}
+
+func TestRadarrUsesHardlinks_FalseWhenDisabled(t *testing.T) {
+	client, _ := newTestArrClient(t, func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: false})
+	})
+
+	ok, err := client.radarrUsesHardlinks()
+	if err != nil {
+		t.Fatalf("radarrUsesHardlinks: %v", err)
+	}
+	if ok {
+		t.Fatal("expected false when copyUsingHardlinks is false")
+	}
+}
+
+func TestSonarrUsesHardlinks_ReflectsCopyUsingHardlinksSetting(t *testing.T) {
+	client, _ := newTestArrClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/config/mediamanagement" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: true})
+	})
+
+	ok, err := client.sonarrUsesHardlinks()
+	if err != nil {
+		t.Fatalf("sonarrUsesHardlinks: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected true when copyUsingHardlinks is true")
+	}
+}

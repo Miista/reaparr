@@ -83,6 +83,44 @@ func (a *arrClient) findSeriesByTvdbID(tvdbID string) (series sonarrSeries, ok b
 	return sonarrSeries{}, false, nil
 }
 
+// mediaManagementConfig is the small subset of Radarr/Sonarr's global media
+// management settings needed to check the hardlink precondition.
+type mediaManagementConfig struct {
+	CopyUsingHardlinks bool `json:"copyUsingHardlinks"`
+}
+
+// radarrUsesHardlinks/sonarrUsesHardlinks report whether each service's
+// global copyUsingHardlinks setting is enabled. This is the precondition
+// for Reaparr's core safety guarantee: deleting the Radarr/Sonarr-side file
+// only leaves the downloads-side copy and its seed untouched if that file
+// was imported as a hardlink (or a real copy) rather than moved. If this is
+// false, deleting via Radarr/Sonarr's API deletes the ONLY copy of the
+// file, breaking any active seed — with real consequences on trackers that
+// enforce minimum seed time/ratio.
+//
+// This check has a known blind spot: it reflects the setting used for
+// normal automatic imports, but Radarr/Sonarr's Manual Import feature
+// defaults to Move mode regardless of this setting (a documented
+// upstream quirk, not something Reaparr can detect or control). It is
+// still a solid signal for the common case — automatic import of
+// completed downloads — which is what Reaparr's continuous cleanup
+// actually depends on.
+func (a *arrClient) radarrUsesHardlinks() (bool, error) {
+	var cfg mediaManagementConfig
+	if err := a.get(a.radarrURL+"/api/v3/config/mediamanagement", a.radarrAPIKey, &cfg); err != nil {
+		return false, err
+	}
+	return cfg.CopyUsingHardlinks, nil
+}
+
+func (a *arrClient) sonarrUsesHardlinks() (bool, error) {
+	var cfg mediaManagementConfig
+	if err := a.get(a.sonarrURL+"/api/v3/config/mediamanagement", a.sonarrAPIKey, &cfg); err != nil {
+		return false, err
+	}
+	return cfg.CopyUsingHardlinks, nil
+}
+
 func (a *arrClient) get(url, apiKey string, out any) error {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
