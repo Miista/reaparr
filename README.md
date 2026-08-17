@@ -55,6 +55,19 @@ ongoing seed are left completely untouched, continuing independently until
 qBittorrent's own seeding-limit policy removes it on its own schedule. The
 two cleanup paths stay fully decoupled by design.
 
+## Requirements
+
+- Jellyfin, Radarr, and/or Sonarr already set up and reachable on the same
+  network as Reaparr. Sonarr is only needed if you have TV libraries;
+  Radarr only if you have movie libraries.
+- A Jellyfin API key: **Dashboard → API Keys → +** in the Jellyfin admin UI.
+- A Radarr/Sonarr API key each: **Settings → General → Security → API Key**
+  in their respective UIs.
+- Developed and tested against Jellyfin 10.11.x. Jellyfin's Activity Log
+  endpoint has no server-side event-type or date-range filter on this
+  version — Reaparr fetches and filters it client-side, which is fine at
+  household scale but worth knowing if you're auditing API traffic.
+
 ## Configuration
 
 All configuration is via environment variables.
@@ -85,9 +98,14 @@ state — it's a background process only, with no ports to expose and no
 volumes to mount. It needs network access to Jellyfin and Radarr/Sonarr, and
 must **not** be given access to qBittorrent or its network.
 
+Pre-built images are published to
+[ghcr.io/miista/reaparr](https://github.com/Miista/reaparr/pkgs/container/reaparr)
+for `linux/amd64` and `linux/arm64`.
+
 ```yaml
 reaparr:
-  build: ./reaparr
+  image: ghcr.io/miista/reaparr:latest
+  restart: unless-stopped
   environment:
     JELLYFIN_URL: http://jellyfin:8096
     JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}
@@ -99,7 +117,6 @@ reaparr:
     POLL_SCHEDULE: "@hourly"
   networks:
     - media
-  restart: unless-stopped
 ```
 
 ## Development
@@ -110,3 +127,6 @@ go build .
 docker build -t reaparr .
 ```
 
+## License
+
+[MIT](LICENSE)
