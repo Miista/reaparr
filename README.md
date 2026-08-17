@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon-256.png" width="128" alt="Reaparr icon">
+</p>
+
 # Reaparr
 
 *Reaps your media once you're done with it.*
