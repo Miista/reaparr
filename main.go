@@ -1,9 +1,9 @@
 // reaparr: on a cron schedule, checks Jellyfin's activity log and current
 // watched state to find fully-played titles whose grace period has
 // elapsed, then deletes them via Radarr/Sonarr. Never touches qBittorrent
-// or Jellyfin's own library — see plan.md. Entirely stateless: every
-// sweep is a fresh, complete pass with nothing remembered from the last
-// one, and no HTTP surface — this is a background process only.
+// or Jellyfin's own library. Entirely stateless: every sweep is a fresh,
+// complete pass with nothing remembered from the last one, and no HTTP
+// surface — this is a background process only.
 package main
 
 import (

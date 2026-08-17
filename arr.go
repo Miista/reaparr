@@ -8,9 +8,9 @@ import (
 )
 
 // arrClient talks to Radarr/Sonarr only. It must never be given
-// qBittorrent credentials or access — see plan.md's
-// deletion-scope decision. Deleting the Radarr/Sonarr-side file only drops
-// one of two hardlinks; the downloads-side copy and its seed are untouched.
+// qBittorrent credentials or access. Radarr/Sonarr import media via
+// hardlink, so deleting the Radarr/Sonarr-side file only drops one of two
+// hardlinks; the downloads-side copy and its seed are left untouched.
 type arrClient struct {
 	radarrURL    string
 	radarrAPIKey string

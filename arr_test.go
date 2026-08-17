@@ -22,10 +22,10 @@ func newTestArrClient(t *testing.T, handler http.HandlerFunc) (*arrClient, *http
 	}, srv
 }
 
-// Deletion scope is the whole point of this tool — see
-// plan.md: Radarr/Sonarr only, deleteFiles=true so the
-// Radarr/Sonarr-side hardlink is dropped, and it must never touch
-// qBittorrent. These tests assert the exact request shape sent.
+// Deletion scope is the whole point of this tool: Radarr/Sonarr only,
+// deleteFiles=true so the Radarr/Sonarr-side hardlink is dropped, and it
+// must never touch qBittorrent. These tests assert the exact request shape
+// sent.
 func TestDeleteMovie_RequestShape(t *testing.T) {
 	var gotMethod, gotPath, gotAPIKey string
 	var gotQuery url.Values

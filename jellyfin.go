@@ -10,9 +10,9 @@ import (
 
 // jellyfinClient polls Jellyfin for played items and playback-stopped
 // activity. Auto-discovers users via /Users rather than requiring a
-// configured list — see the "either account" trigger condition in
-// plan.md: any account's played state is sufficient, so there is no
-// meaningful subset of users to exclude in a household deployment.
+// configured list — any one account's played state is sufficient (see
+// sweep.go), so there is no meaningful subset of users to exclude in a
+// multi-user deployment.
 type jellyfinClient struct {
 	baseURL    string
 	apiKey     string

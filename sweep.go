@@ -19,11 +19,7 @@ const (
 
 // sweeper runs on a cron schedule. Reaparr is entirely stateless: every
 // sweep independently re-derives everything it needs to know from live
-// Jellyfin data, rather than remembering anything about a prior sweep. See
-// plan.md's Architecture section for the full history of how this design
-// was reached — it replaced an earlier webhook-listener design, then a
-// SQLite-backed store, then a per-item watched-state store, before landing
-// here.
+// Jellyfin data, rather than remembering anything about a prior sweep.
 //
 // A sweep does three things:
 //  1. Ask Jellyfin's Activity Log for every item with a VideoPlaybackStopped

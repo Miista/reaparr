@@ -19,7 +19,9 @@ On a configurable cron schedule, each sweep:
    partway through, so this alone doesn't mean "finished."
 2. Asks every Jellyfin user account for the movies/episodes they currently
    have marked `Played=true` (set B). Any one account having watched a title
-   is enough — it doesn't require every account on the server to agree.
+   is enough — it doesn't require every account on the server to agree,
+   since in a multi-user household requiring everyone to finish before
+   cleanup would mean most titles never qualify at all.
 3. Acts only on the intersection, A ∩ B: items that are both currently fully
    played AND stopped playing a while ago. Because B is re-checked live every
    sweep, a title that gets unplayed again (started, abandoned, `Played`
@@ -108,12 +110,3 @@ go build .
 docker build -t reaparr .
 ```
 
-## Design history
-
-`plan.md` documents the *original* design rationale (a webhook-driven
-listener feeding a persisted store) and the reasoning behind decisions like
-the grace period and the qBittorrent exclusion. That architecture has since
-been completely replaced by the stateless, poll-and-intersect sweep
-described above — treat `plan.md` as historical context for *why*, not as a
-reference for *how it currently works*. This README and the source files are
-authoritative for current behavior.
