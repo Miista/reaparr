@@ -36,11 +36,22 @@ type sonarrSeries struct {
 	TvdbID int    `json:"tvdbId"`
 }
 
+// hasRadarr/hasSonarr report whether each service was actually configured —
+// only Radarr's API key or only Sonarr's may be set (a movies-only or
+// TV-only household has no use for the other), so neither is assumed to be
+// present.
+func (a *arrClient) hasRadarr() bool { return a.radarrAPIKey != "" }
+func (a *arrClient) hasSonarr() bool { return a.sonarrAPIKey != "" }
+
 // findMovieByTmdbID looks up Radarr's internal movie ID for a given TMDB
-// ID. Returns ok=false if Radarr doesn't have this movie at all — that's a
-// real, expected case (Jellyfin might see something Radarr doesn't track),
-// not treated as an error.
+// ID. Returns ok=false if Radarr isn't configured at all, or if it's
+// configured but doesn't have this movie — both are real, expected cases
+// (Jellyfin might see something Radarr doesn't track, or this deployment
+// might not run Radarr at all), not treated as an error.
 func (a *arrClient) findMovieByTmdbID(tmdbID string) (movie radarrMovie, ok bool, err error) {
+	if !a.hasRadarr() {
+		return radarrMovie{}, false, nil
+	}
 	var movies []radarrMovie
 	if err := a.get(a.radarrURL+"/api/v3/movie", a.radarrAPIKey, &movies); err != nil {
 		return radarrMovie{}, false, err
@@ -54,8 +65,12 @@ func (a *arrClient) findMovieByTmdbID(tmdbID string) (movie radarrMovie, ok bool
 }
 
 // findSeriesByTvdbID looks up Sonarr's internal series ID for a given TVDB
-// ID. Returns ok=false if Sonarr doesn't track this series.
+// ID. Returns ok=false if Sonarr isn't configured at all, or if it's
+// configured but doesn't track this series.
 func (a *arrClient) findSeriesByTvdbID(tvdbID string) (series sonarrSeries, ok bool, err error) {
+	if !a.hasSonarr() {
+		return sonarrSeries{}, false, nil
+	}
 	var allSeries []sonarrSeries
 	if err := a.get(a.sonarrURL+"/api/v3/series", a.sonarrAPIKey, &allSeries); err != nil {
 		return sonarrSeries{}, false, err

@@ -138,6 +138,49 @@ func TestFindMovieByTmdbID_NoMatchReturnsOkFalse(t *testing.T) {
 	}
 }
 
+// A movies-only household has no use for Sonarr, and vice versa — either
+// service being unconfigured must be a clean no-op (no request sent, no
+// error), not a crash or a doomed HTTP call to an empty URL.
+func TestFindMovieByTmdbID_RadarrNotConfigured_ReturnsOkFalseNoRequest(t *testing.T) {
+	requestSent := false
+	client, _ := newTestArrClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requestSent = true
+		w.WriteHeader(http.StatusOK)
+	})
+	client.radarrAPIKey = ""
+
+	_, ok, err := client.findMovieByTmdbID("1315772")
+	if err != nil {
+		t.Fatalf("expected no error when radarr isn't configured, got: %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false when radarr isn't configured")
+	}
+	if requestSent {
+		t.Fatal("expected no HTTP request to be sent when radarr isn't configured")
+	}
+}
+
+func TestFindSeriesByTvdbID_SonarrNotConfigured_ReturnsOkFalseNoRequest(t *testing.T) {
+	requestSent := false
+	client, _ := newTestArrClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requestSent = true
+		w.WriteHeader(http.StatusOK)
+	})
+	client.sonarrAPIKey = ""
+
+	_, ok, err := client.findSeriesByTvdbID("410092")
+	if err != nil {
+		t.Fatalf("expected no error when sonarr isn't configured, got: %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false when sonarr isn't configured")
+	}
+	if requestSent {
+		t.Fatal("expected no HTTP request to be sent when sonarr isn't configured")
+	}
+}
+
 func TestFindSeriesByTvdbID_MatchesOnTvdbID(t *testing.T) {
 	client, _ := newTestArrClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v3/series" {

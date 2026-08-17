@@ -77,9 +77,9 @@ All configuration is via environment variables.
 | `JELLYFIN_URL` | `http://jellyfin:8096` | Jellyfin base URL |
 | `JELLYFIN_API_KEY` | — (required) | Jellyfin API key |
 | `RADARR_URL` | `http://radarr:7878` | Radarr base URL |
-| `RADARR_API_KEY` | — (required) | Radarr API key |
+| `RADARR_API_KEY` | — | Radarr API key. At least one of `RADARR_API_KEY`/`SONARR_API_KEY` is required; either alone is enough for a movies-only or TV-only setup |
 | `SONARR_URL` | `http://sonarr:8989` | Sonarr base URL |
-| `SONARR_API_KEY` | — (required) | Sonarr API key |
+| `SONARR_API_KEY` | — | Sonarr API key. See `RADARR_API_KEY` above |
 | `GRACE_PERIOD` | `7d` | How long after the last `VideoPlaybackStopped` event a still-played title must wait before deletion. Accepts Go duration strings (`45m`, `6h`, `168h`, `1h30m`) plus `d` (days) and `w` (weeks) suffixes — e.g. `7d`, `2w`. Fractional day/week values are allowed (e.g. `1.5d`). Months are deliberately unsupported since they aren't a fixed length. |
 | `POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |

@@ -185,6 +185,10 @@ type resolvedArrItem struct {
 func (s *sweeper) resolveToArr(item jellyfinItem) (resolvedArrItem, bool, error) {
 	switch item.Type {
 	case "Movie":
+		if !s.arr.hasRadarr() {
+			s.log.Debug("radarr isn't configured, ignoring this watched movie", "title", item.Name)
+			return resolvedArrItem{}, false, nil
+		}
 		if item.ProviderIds.Tmdb == "" {
 			s.log.Warn("jellyfin has no TMDB id for this watched movie, cannot match it to radarr", "title", item.Name, "jellyfin_item_id", item.ID)
 			return resolvedArrItem{}, false, nil
@@ -199,6 +203,10 @@ func (s *sweeper) resolveToArr(item jellyfinItem) (resolvedArrItem, bool, error)
 		return resolvedArrItem{kind: kindMovie, id: fmt.Sprint(movie.ID), title: movie.Title}, true, nil
 
 	case "Episode":
+		if !s.arr.hasSonarr() {
+			s.log.Debug("sonarr isn't configured, ignoring this watched episode", "series", item.SeriesName, "episode", item.Name)
+			return resolvedArrItem{}, false, nil
+		}
 		tvdbID, err := s.jellyfin.seriesTvdbID(item.SeriesID)
 		if err != nil {
 			return resolvedArrItem{}, false, err

@@ -81,11 +81,11 @@ func loadConfig() (config, error) {
 	if cfg.JellyfinAPIKey == "" {
 		return cfg, fmt.Errorf("JELLYFIN_API_KEY is required")
 	}
-	if cfg.RadarrAPIKey == "" {
-		return cfg, fmt.Errorf("RADARR_API_KEY is required")
-	}
-	if cfg.SonarrAPIKey == "" {
-		return cfg, fmt.Errorf("SONARR_API_KEY is required")
+	// At least one of Radarr/Sonarr must be configured, but not
+	// necessarily both — a movies-only household has no use for Sonarr,
+	// and vice versa. Either alone is a legitimate deployment.
+	if cfg.RadarrAPIKey == "" && cfg.SonarrAPIKey == "" {
+		return cfg, fmt.Errorf("at least one of RADARR_API_KEY or SONARR_API_KEY is required")
 	}
 
 	return cfg, nil

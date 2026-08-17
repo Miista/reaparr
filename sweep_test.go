@@ -322,6 +322,63 @@ func TestSweepOnce_MovieNotInRadarr_IsSkippedNotRetried(t *testing.T) {
 	sw.sweepOnce()
 }
 
+// A Radarr-only or Sonarr-only deployment (movies-only or TV-only
+// household) is a legitimate configuration — a watched episode must be
+// cleanly ignored (no crash, no Jellyfin series lookup, no Sonarr API
+// calls) when Sonarr isn't configured at all, not treated as an error.
+func TestSweepOnce_EpisodeIgnored_WhenSonarrNotConfigured(t *testing.T) {
+	now := time.Now().UTC()
+
+	seriesLookupCalled := false
+	jfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/Users":
+			json.NewEncoder(w).Encode([]jellyfinUser{{ID: "u1", Name: "admin"}})
+		case r.URL.Path == "/Users/u1/Items":
+			json.NewEncoder(w).Encode(jellyfinItemsResponse{Items: []jellyfinItem{
+				{
+					ID: "jf-episode-1", Name: "S01E01", Type: "Episode",
+					SeriesID: "jf-series-1", SeriesName: "Some Show",
+					UserData: jellyfinUserData{Played: true},
+				},
+			}})
+		case r.URL.Path == "/System/ActivityLog/Entries":
+			json.NewEncoder(w).Encode(jellyfinActivityResponse{
+				Items: []jellyfinActivityEntry{
+					{Type: "VideoPlaybackStopped", ItemID: "jf-episode-1", Date: now.Add(-48 * time.Hour)},
+				},
+				TotalRecordCount: 1,
+			})
+		case r.URL.Path == "/Items/jf-series-1":
+			seriesLookupCalled = true
+			json.NewEncoder(w).Encode(jellyfinItem{ID: "jf-series-1", Type: "Series", ProviderIds: jellyfinProviders{Tvdb: "410092"}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer jfSrv.Close()
+	jellyfin := &jellyfinClient{baseURL: jfSrv.URL, apiKey: "k", httpClient: jfSrv.Client(), log: testLogger(t)}
+
+	sonarrCalled := false
+	arrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sonarrCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer arrSrv.Close()
+
+	arr := &arrClient{radarrURL: arrSrv.URL, radarrAPIKey: "radarr-key", sonarrURL: arrSrv.URL, sonarrAPIKey: "", httpClient: arrSrv.Client(), log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+
+	sw.sweepOnce()
+
+	if seriesLookupCalled {
+		t.Fatal("expected no series lookup when sonarr isn't configured")
+	}
+	if sonarrCalled {
+		t.Fatal("expected no sonarr API calls when sonarr isn't configured")
+	}
+}
+
 func TestSweepOnce_ActivityLogPagination(t *testing.T) {
 	now := time.Now().UTC()
 
