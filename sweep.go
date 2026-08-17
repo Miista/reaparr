@@ -71,6 +71,8 @@ func (s *sweeper) run(ctx context.Context) {
 func (s *sweeper) sweepOnce() {
 	s.log.Info("starting a sweep: checking jellyfin's activity log and current watched state, then deleting anything eligible")
 
+	safety := s.checkHardlinkSafety()
+
 	cutoff := time.Now().UTC().Add(-s.gracePeriod)
 	s.log.Debug("looking for playback-stopped events older than this cutoff", "cutoff", cutoff, "grace_period", s.gracePeriod.String())
 
@@ -105,7 +107,7 @@ func (s *sweeper) sweepOnce() {
 
 	var cleaned, skipped, failed int
 	for _, item := range due {
-		resolved, ok, err := s.resolveToArr(item)
+		resolved, ok, err := s.resolveToArr(item, safety)
 		if err != nil {
 			s.log.Error("could not look this item up in radarr/sonarr, will retry next sweep", "title", displayTitle(item), "error", err)
 			failed++
@@ -168,6 +170,49 @@ func (s *sweeper) currentlyPlayedItems() ([]jellyfinItem, error) {
 	return items, nil
 }
 
+// hardlinkSafety records, per sweep, whether each configured service's
+// copyUsingHardlinks setting is enabled — the precondition for Reaparr's
+// "downloads copy stays untouched" guarantee (see arrClient.
+// radarrUsesHardlinks). Checked once per sweep, not per item, since it's a
+// single global setting per service, not something that varies per title.
+//
+// Radarr and Sonarr are gated independently: a movies-only misconfiguration
+// must not also block TV cleanup that's actually safe, and vice versa —
+// each service's own sweep proceeds normally as long as ITS setting is
+// correct, regardless of the other.
+type hardlinkSafety struct {
+	radarrSafe bool
+	sonarrSafe bool
+}
+
+func (s *sweeper) checkHardlinkSafety() hardlinkSafety {
+	var safety hardlinkSafety
+
+	if s.arr.hasRadarr() {
+		usesHardlinks, err := s.arr.radarrUsesHardlinks()
+		if err != nil {
+			s.log.Error("could not check radarr's hardlink setting this sweep, treating radarr as unsafe until it can be confirmed", "error", err)
+		} else if !usesHardlinks {
+			s.log.Error("radarr is NOT configured to use hardlinks (copyUsingHardlinks=false) — deleting a movie would delete the ONLY copy, breaking any active seed and potentially violating private tracker seed-time/ratio rules. Skipping all movie deletions this sweep. Enable 'Use Hardlinks instead of Copy' in Radarr's Media Management settings.")
+		} else {
+			safety.radarrSafe = true
+		}
+	}
+
+	if s.arr.hasSonarr() {
+		usesHardlinks, err := s.arr.sonarrUsesHardlinks()
+		if err != nil {
+			s.log.Error("could not check sonarr's hardlink setting this sweep, treating sonarr as unsafe until it can be confirmed", "error", err)
+		} else if !usesHardlinks {
+			s.log.Error("sonarr is NOT configured to use hardlinks (copyUsingHardlinks=false) — deleting an episode would delete the ONLY copy, breaking any active seed and potentially violating private tracker seed-time/ratio rules. Skipping all episode deletions this sweep. Enable 'Use Hardlinks instead of Copy' in Sonarr's Media Management settings.")
+		} else {
+			safety.sonarrSafe = true
+		}
+	}
+
+	return safety
+}
+
 // resolvedArrItem is a played Jellyfin item successfully matched to its
 // Radarr/Sonarr counterpart, ready to delete.
 type resolvedArrItem struct {
@@ -181,12 +226,17 @@ type resolvedArrItem struct {
 // episodes — see jellyfinClient.seriesTvdbID). Jellyfin's own item ID means
 // nothing to Radarr/Sonarr's delete APIs, so this lookup is required, not
 // optional. ok=false (with no error) means Jellyfin knows about this item
-// but Radarr/Sonarr doesn't — a real, expected case, not a bug.
-func (s *sweeper) resolveToArr(item jellyfinItem) (resolvedArrItem, bool, error) {
+// but Radarr/Sonarr doesn't (or isn't safe to act on this sweep) — a real,
+// expected case, not a bug.
+func (s *sweeper) resolveToArr(item jellyfinItem, safety hardlinkSafety) (resolvedArrItem, bool, error) {
 	switch item.Type {
 	case "Movie":
 		if !s.arr.hasRadarr() {
 			s.log.Debug("radarr isn't configured, ignoring this watched movie", "title", item.Name)
+			return resolvedArrItem{}, false, nil
+		}
+		if !safety.radarrSafe {
+			s.log.Debug("skipping this watched movie: radarr's hardlink setting isn't safe this sweep", "title", item.Name)
 			return resolvedArrItem{}, false, nil
 		}
 		if item.ProviderIds.Tmdb == "" {
@@ -205,6 +255,10 @@ func (s *sweeper) resolveToArr(item jellyfinItem) (resolvedArrItem, bool, error)
 	case "Episode":
 		if !s.arr.hasSonarr() {
 			s.log.Debug("sonarr isn't configured, ignoring this watched episode", "series", item.SeriesName, "episode", item.Name)
+			return resolvedArrItem{}, false, nil
+		}
+		if !safety.sonarrSafe {
+			s.log.Debug("skipping this watched episode: sonarr's hardlink setting isn't safe this sweep", "series", item.SeriesName, "episode", item.Name)
 			return resolvedArrItem{}, false, nil
 		}
 		tvdbID, err := s.jellyfin.seriesTvdbID(item.SeriesID)

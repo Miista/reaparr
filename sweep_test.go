@@ -74,6 +74,9 @@ func newFakeJellyfin(t *testing.T, cfg fakeJellyfinConfig) *jellyfinClient {
 // newFakeArrCatalog serves a fixed Radarr movie / Sonarr series catalog for
 // GET /api/v3/movie and /api/v3/series (used by findMovieByTmdbID /
 // findSeriesByTvdbID), and accepts any DELETE without complaint.
+// newFakeArrCatalog serves a fixed Radarr/Sonarr catalog and reports
+// hardlinks as enabled by default (safe to delete) — tests that
+// specifically exercise the unsafe path build their own fake instead.
 func newFakeArrCatalog(t *testing.T, movies []radarrMovie, series []sonarrSeries) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +85,8 @@ func newFakeArrCatalog(t *testing.T, movies []radarrMovie, series []sonarrSeries
 			json.NewEncoder(w).Encode(movies)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series":
 			json.NewEncoder(w).Encode(series)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/config/mediamanagement":
+			json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: true})
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -90,6 +95,22 @@ func newFakeArrCatalog(t *testing.T, movies []radarrMovie, series []sonarrSeries
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// withHardlinksEnabled wraps a handler so that GET
+// /api/v3/config/mediamanagement reports hardlinks as enabled, falling
+// through to next for everything else. Every fake Radarr/Sonarr server in
+// this file needs to answer this endpoint now that checkHardlinkSafety
+// runs at the start of every sweep — this keeps that boilerplate in one
+// place rather than repeating it in every inline fake.
+func withHardlinksEnabled(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/config/mediamanagement" {
+			json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: true})
+			return
+		}
+		next(w, r)
+	}
 }
 
 func newTestArr(t *testing.T, radarrSrv, sonarrSrv *httptest.Server) *arrClient {
@@ -119,7 +140,7 @@ func TestSweepOnce_DeletesMovieWatchedAndStoppedBeforeGracePeriod(t *testing.T) 
 	})
 
 	var deleteCalls int32
-	deleteTrackingSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	deleteTrackingSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/movie" {
 			json.NewEncoder(w).Encode([]radarrMovie{{ID: 42, Title: "Old Movie", TmdbID: 999}})
 			return
@@ -158,12 +179,14 @@ func TestSweepOnce_LeavesItemAlone_StoppedButNotPastGracePeriod(t *testing.T) {
 	})
 
 	var deleteCalls int32
-	arrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	arrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/movie" {
 			json.NewEncoder(w).Encode([]radarrMovie{{ID: 42, Title: "Recent Movie", TmdbID: 999}})
 			return
 		}
-		atomic.AddInt32(&deleteCalls, 1)
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&deleteCalls, 1)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer arrSrv.Close()
@@ -197,8 +220,10 @@ func TestSweepOnce_IgnoresOldStopEvent_IfNotCurrentlyPlayed(t *testing.T) {
 	})
 
 	var deleteCalls int32
-	arrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&deleteCalls, 1)
+	arrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&deleteCalls, 1)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer arrSrv.Close()
@@ -231,12 +256,14 @@ func TestSweepOnce_UsesLatestStopEvent_WhenMultipleExist(t *testing.T) {
 	})
 
 	var deleteCalls int32
-	arrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	arrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/movie" {
 			json.NewEncoder(w).Encode([]radarrMovie{{ID: 42, Title: "Rewatched Movie", TmdbID: 999}})
 			return
 		}
-		atomic.AddInt32(&deleteCalls, 1)
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&deleteCalls, 1)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer arrSrv.Close()
@@ -277,11 +304,14 @@ func TestSweepOnce_RoutesEpisodeToSonarr_ViaSeriesTvdbID(t *testing.T) {
 	})
 
 	var gotPath string
-	radarrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("radarr should not be called for an episode")
+	radarrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
+		// Only the hardlink-safety check (a GET to config/mediamanagement,
+		// handled by withHardlinksEnabled) should ever reach radarr here —
+		// anything else means radarr was wrongly consulted for an episode.
+		t.Fatalf("radarr should not be called for anything beyond the hardlink check when handling an episode, got %s %s", r.Method, r.URL.Path)
 	}))
 	defer radarrSrv.Close()
-	sonarrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	sonarrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/series" {
 			json.NewEncoder(w).Encode([]sonarrSeries{{ID: 7, Title: "Some Show", TvdbID: 410092}})
 			return
@@ -360,7 +390,10 @@ func TestSweepOnce_EpisodeIgnored_WhenSonarrNotConfigured(t *testing.T) {
 	jellyfin := &jellyfinClient{baseURL: jfSrv.URL, apiKey: "k", httpClient: jfSrv.Client(), log: testLogger(t)}
 
 	sonarrCalled := false
-	arrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	arrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
+		// Only the hardlink-safety check (handled by withHardlinksEnabled,
+		// for radarr since it's configured here) should ever land here —
+		// anything else means sonarr was wrongly consulted.
 		sonarrCalled = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -398,12 +431,14 @@ func TestSweepOnce_ActivityLogPagination(t *testing.T) {
 	})
 
 	var deleteCalls int32
-	arrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	arrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/movie" {
 			json.NewEncoder(w).Encode([]radarrMovie{{ID: 42, Title: "Paginated Movie", TmdbID: 999}})
 			return
 		}
-		atomic.AddInt32(&deleteCalls, 1)
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&deleteCalls, 1)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer arrSrv.Close()
@@ -415,5 +450,134 @@ func TestSweepOnce_ActivityLogPagination(t *testing.T) {
 
 	if got := atomic.LoadInt32(&deleteCalls); got != 1 {
 		t.Fatalf("expected the paginated-in stop event to be found and deleted, got %d delete calls", got)
+	}
+}
+
+// A movies-only misconfiguration (Radarr not using hardlinks) must not
+// also block TV cleanup that's actually safe — each service is gated
+// independently, not as an all-or-nothing precondition.
+func TestSweepOnce_RadarrUnsafe_DoesNotBlockSonarr(t *testing.T) {
+	now := time.Now().UTC()
+
+	jellyfin := newFakeJellyfin(t, fakeJellyfinConfig{
+		users: []jellyfinUser{{ID: "u1", Name: "admin"}},
+		itemsByUser: map[string][]jellyfinItem{
+			"u1": {
+				{ID: "jf-movie-1", Name: "Old Movie", Type: "Movie", ProviderIds: jellyfinProviders{Tmdb: "999"}, UserData: jellyfinUserData{Played: true}},
+				{
+					ID: "jf-episode-1", Name: "S01E01", Type: "Episode",
+					SeriesID: "jf-series-1", SeriesName: "Some Show",
+					UserData: jellyfinUserData{Played: true},
+				},
+			},
+		},
+		activityEntries: []jellyfinActivityEntry{
+			{Type: "VideoPlaybackStopped", ItemID: "jf-movie-1", Date: now.Add(-48 * time.Hour)},
+			{Type: "VideoPlaybackStopped", ItemID: "jf-episode-1", Date: now.Add(-48 * time.Hour)},
+		},
+		seriesByID: map[string]jellyfinItem{
+			"jf-series-1": {ID: "jf-series-1", Type: "Series", ProviderIds: jellyfinProviders{Tvdb: "410092"}},
+		},
+	})
+
+	var movieDeletes, seriesDeletes int32
+	radarrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/config/mediamanagement" {
+			json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: false}) // radarr: unsafe
+			return
+		}
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&movieDeletes, 1)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer radarrSrv.Close()
+
+	sonarrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) { // sonarr: safe
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/series" {
+			json.NewEncoder(w).Encode([]sonarrSeries{{ID: 7, Title: "Some Show", TvdbID: 410092}})
+			return
+		}
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&seriesDeletes, 1)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer sonarrSrv.Close()
+
+	arr := &arrClient{radarrURL: radarrSrv.URL, radarrAPIKey: "k", sonarrURL: sonarrSrv.URL, sonarrAPIKey: "k", httpClient: radarrSrv.Client(), log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+
+	sw.sweepOnce()
+
+	if got := atomic.LoadInt32(&movieDeletes); got != 0 {
+		t.Fatalf("expected 0 movie deletes since radarr is unsafe, got %d", got)
+	}
+	if got := atomic.LoadInt32(&seriesDeletes); got != 1 {
+		t.Fatalf("expected 1 series delete since sonarr is safe, got %d", got)
+	}
+}
+
+// Same as above, mirrored: Sonarr unsafe must not block Radarr.
+func TestSweepOnce_SonarrUnsafe_DoesNotBlockRadarr(t *testing.T) {
+	now := time.Now().UTC()
+
+	jellyfin := newFakeJellyfin(t, fakeJellyfinConfig{
+		users: []jellyfinUser{{ID: "u1", Name: "admin"}},
+		itemsByUser: map[string][]jellyfinItem{
+			"u1": {{ID: "jf-movie-1", Name: "Old Movie", Type: "Movie", ProviderIds: jellyfinProviders{Tmdb: "999"}, UserData: jellyfinUserData{Played: true}}},
+		},
+		activityEntries: []jellyfinActivityEntry{
+			{Type: "VideoPlaybackStopped", ItemID: "jf-movie-1", Date: now.Add(-48 * time.Hour)},
+		},
+	})
+
+	var movieDeletes int32
+	radarrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) { // radarr: safe
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/movie" {
+			json.NewEncoder(w).Encode([]radarrMovie{{ID: 42, Title: "Old Movie", TmdbID: 999}})
+			return
+		}
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&movieDeletes, 1)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer radarrSrv.Close()
+
+	sonarrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/config/mediamanagement" {
+			json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: false}) // sonarr: unsafe
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer sonarrSrv.Close()
+
+	arr := &arrClient{radarrURL: radarrSrv.URL, radarrAPIKey: "k", sonarrURL: sonarrSrv.URL, sonarrAPIKey: "k", httpClient: radarrSrv.Client(), log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+
+	sw.sweepOnce()
+
+	if got := atomic.LoadInt32(&movieDeletes); got != 1 {
+		t.Fatalf("expected 1 movie delete since radarr is safe, got %d", got)
+	}
+}
+
+// checkHardlinkSafety is called once per sweep, not once per item — an
+// API error checking the setting should conservatively treat that service
+// as unsafe for this sweep, not crash or silently assume safe.
+func TestCheckHardlinkSafety_TreatsCheckFailureAsUnsafe(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	arr := &arrClient{radarrURL: srv.URL, radarrAPIKey: "k", httpClient: srv.Client(), log: testLogger(t)}
+	sw := &sweeper{arr: arr, log: testLogger(t)}
+
+	safety := sw.checkHardlinkSafety()
+	if safety.radarrSafe {
+		t.Fatal("expected radarrSafe=false when the hardlink check itself fails")
 	}
 }

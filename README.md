@@ -67,14 +67,17 @@ moves the file into place instead, there is no separate downloads-side
 copy left — deleting the library file deletes the only copy of the data,
 breaking the active seed and, on private trackers, potentially violating
 minimum seed-time/ratio rules mid-count. Reaparr checks each configured
-service's `copyUsingHardlinks` setting on startup; if it's off, Reaparr
-logs a clear error and idles (re-checking hourly) rather than starting
-sweeps, since running would mean every deletion silently carries this
-risk. It's stateless, so there's no downside to idling — a fix takes
-effect on the very next check, no restart needed. Enable "Use Hardlinks
-instead of Copy" in Radarr/Sonarr's Media Management settings to resolve
-it. (This check reflects the setting used for normal automatic imports;
-Radarr/Sonarr's Manual Import feature defaults to Move mode regardless of
+service's `copyUsingHardlinks` setting at the start of every sweep. If a
+service's setting is off, Reaparr skips all deletions for that service this
+sweep (movies for Radarr, episodes for Sonarr) and logs a clear error,
+while the other service — if correctly configured — proceeds normally; a
+movies-only misconfiguration doesn't block TV cleanup that's actually
+safe, and vice versa. It's stateless, so there's no downside to skipping a
+sweep — a fix takes effect on the very next sweep, no restart needed.
+Enable "Use Hardlinks instead of Copy" in Radarr/Sonarr's Media Management
+settings to resolve it. (This check reflects the setting used for normal
+automatic imports; Radarr/Sonarr's Manual Import feature defaults to Move
+mode regardless of
 this setting — a documented upstream quirk Reaparr can't detect or
 control, but which only applies to that one deliberate, human-triggered
 action, not Reaparr's ongoing cleanup.)
