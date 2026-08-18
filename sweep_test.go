@@ -45,7 +45,7 @@ func newFakeJellyfin(t *testing.T, cfg fakeJellyfinConfig) *jellyfinClient {
 		case r.URL.Path == "/System/ActivityLog/Entries":
 			// Real Jellyfin always returns these newest-first, hardcoded
 			// server-side with no way to override it (confirmed against
-			// this exact server version's source) — itemsStoppedBefore
+			// this exact server version's source) — latestStopEvents
 			// relies on that ordering, so the fake must enforce it too,
 			// regardless of what order a test lists activityEntries in.
 			sorted := append([]jellyfinActivityEntry(nil), cfg.activityEntries...)
@@ -155,7 +155,7 @@ func TestSweepOnce_DeletesMovieWatchedAndStoppedBeforeGracePeriod(t *testing.T) 
 	defer deleteTrackingSrv.Close()
 
 	arr := &arrClient{radarrURL: deleteTrackingSrv.URL, radarrAPIKey: "k", sonarrURL: deleteTrackingSrv.URL, sonarrAPIKey: "k", httpClient: deleteTrackingSrv.Client(), log: testLogger(t)}
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 24 * time.Hour, tvGracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -192,7 +192,7 @@ func TestSweepOnce_LeavesItemAlone_StoppedButNotPastGracePeriod(t *testing.T) {
 	defer arrSrv.Close()
 
 	arr := &arrClient{radarrURL: arrSrv.URL, radarrAPIKey: "k", sonarrURL: arrSrv.URL, sonarrAPIKey: "k", httpClient: arrSrv.Client(), log: testLogger(t)}
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 7 * 24 * time.Hour, log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 7 * 24 * time.Hour, tvGracePeriod: 7 * 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -229,7 +229,7 @@ func TestSweepOnce_IgnoresOldStopEvent_IfNotCurrentlyPlayed(t *testing.T) {
 	defer arrSrv.Close()
 
 	arr := &arrClient{radarrURL: arrSrv.URL, radarrAPIKey: "k", sonarrURL: arrSrv.URL, sonarrAPIKey: "k", httpClient: arrSrv.Client(), log: testLogger(t)}
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 24 * time.Hour, tvGracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -273,7 +273,7 @@ func TestSweepOnce_UsesLatestStopEvent_WhenMultipleExist(t *testing.T) {
 	// this must NOT be deleted yet, even though the OLDER stop event is
 	// well past 24h. Using the wrong (earliest) stop event would wrongly
 	// delete this.
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 24 * time.Hour, tvGracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -322,7 +322,7 @@ func TestSweepOnce_RoutesEpisodeToSonarr_ViaSeriesTvdbID(t *testing.T) {
 	defer sonarrSrv.Close()
 
 	arr := &arrClient{radarrURL: radarrSrv.URL, radarrAPIKey: "k", sonarrURL: sonarrSrv.URL, sonarrAPIKey: "k", httpClient: sonarrSrv.Client(), log: testLogger(t)}
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 24 * time.Hour, tvGracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -346,7 +346,7 @@ func TestSweepOnce_MovieNotInRadarr_IsSkippedNotRetried(t *testing.T) {
 
 	arrSrv := newFakeArrCatalog(t, []radarrMovie{{ID: 1, Title: "Some Other Movie", TmdbID: 999}}, nil)
 	arr := newTestArr(t, arrSrv, arrSrv)
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 24 * time.Hour, tvGracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	// Should not panic or error out — just log a warning and move on.
 	sw.sweepOnce()
@@ -400,7 +400,7 @@ func TestSweepOnce_EpisodeIgnored_WhenSonarrNotConfigured(t *testing.T) {
 	defer arrSrv.Close()
 
 	arr := &arrClient{radarrURL: arrSrv.URL, radarrAPIKey: "radarr-key", sonarrURL: arrSrv.URL, sonarrAPIKey: "", httpClient: arrSrv.Client(), log: testLogger(t)}
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 24 * time.Hour, tvGracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -444,7 +444,7 @@ func TestSweepOnce_ActivityLogPagination(t *testing.T) {
 	defer arrSrv.Close()
 
 	arr := &arrClient{radarrURL: arrSrv.URL, radarrAPIKey: "k", sonarrURL: arrSrv.URL, sonarrAPIKey: "k", httpClient: arrSrv.Client(), log: testLogger(t)}
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 24 * time.Hour, tvGracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -506,7 +506,7 @@ func TestSweepOnce_RadarrUnsafe_DoesNotBlockSonarr(t *testing.T) {
 	defer sonarrSrv.Close()
 
 	arr := &arrClient{radarrURL: radarrSrv.URL, radarrAPIKey: "k", sonarrURL: sonarrSrv.URL, sonarrAPIKey: "k", httpClient: radarrSrv.Client(), log: testLogger(t)}
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 24 * time.Hour, tvGracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -555,7 +555,7 @@ func TestSweepOnce_SonarrUnsafe_DoesNotBlockRadarr(t *testing.T) {
 	defer sonarrSrv.Close()
 
 	arr := &arrClient{radarrURL: radarrSrv.URL, radarrAPIKey: "k", sonarrURL: sonarrSrv.URL, sonarrAPIKey: "k", httpClient: radarrSrv.Client(), log: testLogger(t)}
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, gracePeriod: 24 * time.Hour, log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 24 * time.Hour, tvGracePeriod: 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
@@ -579,5 +579,111 @@ func TestCheckHardlinkSafety_TreatsCheckFailureAsUnsafe(t *testing.T) {
 	safety := sw.checkHardlinkSafety()
 	if safety.radarrSafe {
 		t.Fatal("expected radarrSafe=false when the hardlink check itself fails")
+	}
+}
+
+// A movie past its (short) movies grace period, but not yet past a
+// longer TV grace period, must still be deleted — the two settings are
+// genuinely independent, not "whichever is longer wins" or similar.
+func TestSweepOnce_UsesShorterMoviesGracePeriod(t *testing.T) {
+	now := time.Now().UTC()
+
+	jellyfin := newFakeJellyfin(t, fakeJellyfinConfig{
+		users: []jellyfinUser{{ID: "u1", Name: "admin"}},
+		itemsByUser: map[string][]jellyfinItem{
+			"u1": {{ID: "jf-movie-1", Name: "Quick Movie", Type: "Movie", ProviderIds: jellyfinProviders{Tmdb: "999"}, UserData: jellyfinUserData{Played: true}}},
+		},
+		activityEntries: []jellyfinActivityEntry{
+			// stopped 3 days ago: past a 2-day movies grace period, but
+			// NOT past a 7-day TV grace period.
+			{Type: "VideoPlaybackStopped", ItemID: "jf-movie-1", Date: now.Add(-3 * 24 * time.Hour)},
+		},
+	})
+
+	var deleteCalls int32
+	arrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/movie" {
+			json.NewEncoder(w).Encode([]radarrMovie{{ID: 42, Title: "Quick Movie", TmdbID: 999}})
+			return
+		}
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&deleteCalls, 1)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer arrSrv.Close()
+
+	arr := newTestArr(t, arrSrv, arrSrv)
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 2 * 24 * time.Hour, tvGracePeriod: 7 * 24 * time.Hour, log: testLogger(t)}
+
+	sw.sweepOnce()
+
+	if got := atomic.LoadInt32(&deleteCalls); got != 1 {
+		t.Fatalf("expected 1 delete: movie is past the 2-day movies grace period, got %d", got)
+	}
+}
+
+// Mirrors the above: an episode past a shorter movies grace period but
+// not yet past the longer TV grace period must NOT be deleted — episodes
+// are always judged against tvGracePeriod, never moviesGracePeriod.
+func TestSweepOnce_UsesLongerTVGracePeriod(t *testing.T) {
+	now := time.Now().UTC()
+
+	jellyfin := newFakeJellyfin(t, fakeJellyfinConfig{
+		users: []jellyfinUser{{ID: "u1", Name: "admin"}},
+		itemsByUser: map[string][]jellyfinItem{
+			"u1": {{
+				ID: "jf-episode-1", Name: "S01E01", Type: "Episode",
+				SeriesID: "jf-series-1", SeriesName: "Some Show",
+				UserData: jellyfinUserData{Played: true},
+			}},
+		},
+		activityEntries: []jellyfinActivityEntry{
+			// stopped 3 days ago: past a 2-day movies grace period, but
+			// NOT past a 7-day TV grace period. If episodes were wrongly
+			// judged against moviesGracePeriod, this would be deleted.
+			{Type: "VideoPlaybackStopped", ItemID: "jf-episode-1", Date: now.Add(-3 * 24 * time.Hour)},
+		},
+		seriesByID: map[string]jellyfinItem{
+			"jf-series-1": {ID: "jf-series-1", Type: "Series", ProviderIds: jellyfinProviders{Tvdb: "410092"}},
+		},
+	})
+
+	var deleteCalls int32
+	sonarrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/series" {
+			json.NewEncoder(w).Encode([]sonarrSeries{{ID: 7, Title: "Some Show", TvdbID: 410092}})
+			return
+		}
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&deleteCalls, 1)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer sonarrSrv.Close()
+
+	arr := &arrClient{radarrURL: sonarrSrv.URL, radarrAPIKey: "k", sonarrURL: sonarrSrv.URL, sonarrAPIKey: "k", httpClient: sonarrSrv.Client(), log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 2 * 24 * time.Hour, tvGracePeriod: 7 * 24 * time.Hour, log: testLogger(t)}
+
+	sw.sweepOnce()
+
+	if got := atomic.LoadInt32(&deleteCalls); got != 0 {
+		t.Fatalf("expected 0 deletes: episode is within the 7-day TV grace period even though it's past the 2-day movies grace period, got %d", got)
+	}
+}
+
+func TestGracePeriodFor_MovieUsesMoviesGracePeriod(t *testing.T) {
+	sw := &sweeper{moviesGracePeriod: 2 * 24 * time.Hour, tvGracePeriod: 7 * 24 * time.Hour}
+	got := sw.gracePeriodFor(jellyfinItem{Type: "Movie"})
+	if got != 2*24*time.Hour {
+		t.Fatalf("expected movies grace period, got %v", got)
+	}
+}
+
+func TestGracePeriodFor_EpisodeUsesTVGracePeriod(t *testing.T) {
+	sw := &sweeper{moviesGracePeriod: 2 * 24 * time.Hour, tvGracePeriod: 7 * 24 * time.Hour}
+	got := sw.gracePeriodFor(jellyfinItem{Type: "Episode"})
+	if got != 7*24*time.Hour {
+		t.Fatalf("expected TV grace period, got %v", got)
 	}
 }

@@ -48,11 +48,12 @@ func main() {
 	}
 
 	sweeper := &sweeper{
-		jellyfin:    jellyfin,
-		arr:         arr,
-		gracePeriod: cfg.GracePeriod,
-		schedule:    cfg.PollSchedule,
-		log:         logger.With("component", "sweep"),
+		jellyfin:          jellyfin,
+		arr:               arr,
+		moviesGracePeriod: cfg.MoviesGracePeriod,
+		tvGracePeriod:     cfg.TVGracePeriod,
+		schedule:          cfg.PollSchedule,
+		log:               logger.With("component", "sweep"),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

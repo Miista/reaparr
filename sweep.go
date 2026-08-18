@@ -41,11 +41,18 @@ const (
 // state, a fresh process performs a fresh, fully-correct sweep immediately
 // on startup.
 type sweeper struct {
-	jellyfin    *jellyfinClient
-	arr         *arrClient
-	gracePeriod time.Duration
-	schedule    cron.Schedule
-	log         *slog.Logger
+	jellyfin *jellyfinClient
+	arr      *arrClient
+
+	// Movies and TV are gated by independent grace periods — a household
+	// might want a short one for movies (single-sitting watches) and a
+	// longer one for TV (a season pack might sit half-watched between
+	// episodes for a while).
+	moviesGracePeriod time.Duration
+	tvGracePeriod     time.Duration
+
+	schedule cron.Schedule
+	log      *slog.Logger
 }
 
 func (s *sweeper) run(ctx context.Context) {
@@ -73,15 +80,15 @@ func (s *sweeper) sweepOnce() {
 
 	safety := s.checkHardlinkSafety()
 
-	cutoff := time.Now().UTC().Add(-s.gracePeriod)
-	s.log.Debug("looking for playback-stopped events older than this cutoff", "cutoff", cutoff, "grace_period", s.gracePeriod.String())
+	now := time.Now().UTC()
+	s.log.Debug("grace periods for this sweep", "movies_grace_period", s.moviesGracePeriod.String(), "tv_grace_period", s.tvGracePeriod.String())
 
-	stoppedBefore, err := s.jellyfin.itemsStoppedBefore(cutoff)
+	latestStop, err := s.jellyfin.latestStopEvents()
 	if err != nil {
 		s.log.Error("could not read jellyfin's activity log this sweep, will try again next time", "error", err)
 		return
 	}
-	s.log.Debug("found items with an old-enough playback-stopped event", "count", len(stoppedBefore))
+	s.log.Debug("found items with at least one playback-stopped event", "count", len(latestStop))
 
 	playedItems, err := s.currentlyPlayedItems()
 	if err != nil {
@@ -92,16 +99,22 @@ func (s *sweeper) sweepOnce() {
 
 	var due []jellyfinItem
 	for _, item := range playedItems {
-		stoppedAt, stopped := stoppedBefore[item.ID]
+		stoppedAt, stopped := latestStop[item.ID]
 		if !stopped {
 			continue
 		}
-		s.log.Info("this item is watched and past its grace period, will delete it now", "title", displayTitle(item), "jellyfin_item_id", item.ID, "stopped_playing_at", stoppedAt, "grace_period", s.gracePeriod.String())
+
+		gracePeriod := s.gracePeriodFor(item)
+		if !stoppedAt.Before(now.Add(-gracePeriod)) {
+			continue
+		}
+
+		s.log.Info("this item is watched and past its grace period, will delete it now", "title", displayTitle(item), "jellyfin_item_id", item.ID, "stopped_playing_at", stoppedAt, "grace_period", gracePeriod.String())
 		due = append(due, item)
 	}
 
 	if len(due) == 0 {
-		s.log.Info("sweep finished: nothing is due for deletion right now", "currently_played_items", len(playedItems), "items_with_old_stop_event", len(stoppedBefore))
+		s.log.Info("sweep finished: nothing is due for deletion right now", "currently_played_items", len(playedItems), "items_with_a_stop_event", len(latestStop))
 		return
 	}
 
@@ -136,7 +149,19 @@ func (s *sweeper) sweepOnce() {
 		cleaned++
 	}
 
-	s.log.Info("sweep finished", "currently_played_items", len(playedItems), "items_with_old_stop_event", len(stoppedBefore), "due_for_deletion", len(due), "successfully_deleted", cleaned, "skipped_not_in_arr", skipped, "failed_to_delete", failed)
+	s.log.Info("sweep finished", "currently_played_items", len(playedItems), "items_with_a_stop_event", len(latestStop), "due_for_deletion", len(due), "successfully_deleted", cleaned, "skipped_not_in_arr", skipped, "failed_to_delete", failed)
+}
+
+// gracePeriodFor returns the grace period that applies to an item, based on
+// its Jellyfin type — movies and TV are independently configurable (see
+// config.go). Episodes use the TV grace period even though Sonarr acts at
+// the series level; the two settings both exist to express "how long
+// should this show be left alone after an episode stops playing."
+func (s *sweeper) gracePeriodFor(item jellyfinItem) time.Duration {
+	if item.Type == "Episode" {
+		return s.tvGracePeriod
+	}
+	return s.moviesGracePeriod
 }
 
 // currentlyPlayedItems returns every movie/episode any user currently has

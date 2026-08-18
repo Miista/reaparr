@@ -9,8 +9,14 @@ import (
 )
 
 type config struct {
-	LogLevel    string
-	GracePeriod time.Duration
+	LogLevel string
+
+	// Separate grace periods for movies and TV — a household might want a
+	// short one for movies (single-sitting watches) and a longer one for
+	// TV (a season pack might sit half-watched for a while between
+	// episodes).
+	MoviesGracePeriod time.Duration
+	TVGracePeriod     time.Duration
 
 	PollScheduleRaw string
 	PollSchedule    cron.Schedule
@@ -31,7 +37,8 @@ type config struct {
 func (c config) logAttrs() []any {
 	return []any{
 		"log_level", c.LogLevel,
-		"grace_period", c.GracePeriod.String(),
+		"movies_grace_period", c.MoviesGracePeriod.String(),
+		"tv_grace_period", c.TVGracePeriod.String(),
 		"poll_schedule", c.PollScheduleRaw,
 		"jellyfin_url", c.JellyfinURL,
 		"jellyfin_api_key_set", c.JellyfinAPIKey != "",
@@ -65,12 +72,19 @@ func loadConfig() (config, error) {
 	// grace period is a span of time from a reference point, not a
 	// recurring schedule — cron expressions don't express "wait this
 	// long", only "run at these moments".
-	graceRaw := envOr("GRACE_PERIOD", "7d")
-	grace, err := parseGracePeriod(graceRaw)
+	moviesGraceRaw := envOr("GRACE_PERIOD_MOVIES", "7d")
+	moviesGrace, err := parseGracePeriod(moviesGraceRaw)
 	if err != nil {
-		return cfg, fmt.Errorf("invalid GRACE_PERIOD %q: %w", graceRaw, err)
+		return cfg, fmt.Errorf("invalid GRACE_PERIOD_MOVIES %q: %w", moviesGraceRaw, err)
 	}
-	cfg.GracePeriod = grace
+	cfg.MoviesGracePeriod = moviesGrace
+
+	tvGraceRaw := envOr("GRACE_PERIOD_TV", "7d")
+	tvGrace, err := parseGracePeriod(tvGraceRaw)
+	if err != nil {
+		return cfg, fmt.Errorf("invalid GRACE_PERIOD_TV %q: %w", tvGraceRaw, err)
+	}
+	cfg.TVGracePeriod = tvGrace
 
 	schedule, err := cronParser.Parse(cfg.PollScheduleRaw)
 	if err != nil {

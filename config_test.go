@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func clearArrEnv(t *testing.T) {
 	t.Helper()
@@ -67,5 +70,64 @@ func TestLoadConfig_AcceptsBothRadarrAndSonarr(t *testing.T) {
 	}
 	if cfg.RadarrAPIKey != "radarr-key" || cfg.SonarrAPIKey != "sonarr-key" {
 		t.Fatalf("unexpected config: radarr=%q sonarr=%q", cfg.RadarrAPIKey, cfg.SonarrAPIKey)
+	}
+}
+
+func TestLoadConfig_GracePeriodsDefaultToSevenDays(t *testing.T) {
+	clearArrEnv(t)
+	t.Setenv("RADARR_API_KEY", "radarr-key")
+	t.Setenv("GRACE_PERIOD_MOVIES", "")
+	t.Setenv("GRACE_PERIOD_TV", "")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.MoviesGracePeriod != 7*24*time.Hour {
+		t.Fatalf("expected default 7d movies grace period, got %v", cfg.MoviesGracePeriod)
+	}
+	if cfg.TVGracePeriod != 7*24*time.Hour {
+		t.Fatalf("expected default 7d TV grace period, got %v", cfg.TVGracePeriod)
+	}
+}
+
+// The whole point of the feature: movies and TV must be configurable
+// independently, e.g. a short grace period for movies and a longer one
+// for TV shows.
+func TestLoadConfig_GracePeriodsAreIndependentlyConfigurable(t *testing.T) {
+	clearArrEnv(t)
+	t.Setenv("RADARR_API_KEY", "radarr-key")
+	t.Setenv("GRACE_PERIOD_MOVIES", "2d")
+	t.Setenv("GRACE_PERIOD_TV", "7d")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.MoviesGracePeriod != 2*24*time.Hour {
+		t.Fatalf("expected 2d movies grace period, got %v", cfg.MoviesGracePeriod)
+	}
+	if cfg.TVGracePeriod != 7*24*time.Hour {
+		t.Fatalf("expected 7d TV grace period, got %v", cfg.TVGracePeriod)
+	}
+}
+
+func TestLoadConfig_RejectsInvalidGracePeriodMovies(t *testing.T) {
+	clearArrEnv(t)
+	t.Setenv("RADARR_API_KEY", "radarr-key")
+	t.Setenv("GRACE_PERIOD_MOVIES", "bogus")
+
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("expected an error for an invalid GRACE_PERIOD_MOVIES value, got nil")
+	}
+}
+
+func TestLoadConfig_RejectsInvalidGracePeriodTV(t *testing.T) {
+	clearArrEnv(t)
+	t.Setenv("RADARR_API_KEY", "radarr-key")
+	t.Setenv("GRACE_PERIOD_TV", "bogus")
+
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("expected an error for an invalid GRACE_PERIOD_TV value, got nil")
 	}
 }

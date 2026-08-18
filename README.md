@@ -107,9 +107,15 @@ All configuration is via environment variables.
 | `RADARR_API_KEY` | — | Radarr API key. At least one of `RADARR_API_KEY`/`SONARR_API_KEY` is required; either alone is enough for a movies-only or TV-only setup |
 | `SONARR_URL` | `http://sonarr:8989` | Sonarr base URL |
 | `SONARR_API_KEY` | — | Sonarr API key. See `RADARR_API_KEY` above |
-| `GRACE_PERIOD` | `7d` | How long after the last `VideoPlaybackStopped` event a still-played title must wait before deletion. Accepts Go duration strings (`45m`, `6h`, `168h`, `1h30m`) plus `d` (days) and `w` (weeks) suffixes — e.g. `7d`, `2w`. Fractional day/week values are allowed (e.g. `1.5d`). Months are deliberately unsupported since they aren't a fixed length. |
+| `GRACE_PERIOD_MOVIES` | `7d` | How long after the last `VideoPlaybackStopped` event a still-played movie must wait before deletion |
+| `GRACE_PERIOD_TV` | `7d` | Same, for TV episodes — configured independently of `GRACE_PERIOD_MOVIES`, e.g. a shorter grace period for movies (single-sitting watches) and a longer one for TV (a season pack might sit half-watched between episodes for a while) |
 | `POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
+
+Both grace-period variables accept Go duration strings (`45m`, `6h`, `168h`,
+`1h30m`) plus `d` (days) and `w` (weeks) suffixes — e.g. `7d`, `2w`.
+Fractional day/week values are allowed (e.g. `1.5d`). Months are
+deliberately unsupported since they aren't a fixed length.
 
 The grace period exists to protect against a premature or mistaken "played"
 flag (e.g. skipping credits) triggering deletion before anyone notices
@@ -140,7 +146,8 @@ reaparr:
     RADARR_API_KEY: ${RADARR_API_KEY}
     SONARR_URL: http://sonarr:8989
     SONARR_API_KEY: ${SONARR_API_KEY}
-    GRACE_PERIOD: 7d
+    GRACE_PERIOD_MOVIES: 2d
+    GRACE_PERIOD_TV: 7d
     POLL_SCHEDULE: "@hourly"
   networks:
     - media

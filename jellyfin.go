@@ -137,20 +137,27 @@ func (c *jellyfinClient) seriesTvdbID(seriesID string) (string, error) {
 	return item.ProviderIds.Tvdb, nil
 }
 
-// itemsStoppedBefore returns, for every item whose MOST RECENT
-// VideoPlaybackStopped activity-log event is older than cutoff, that
-// event's timestamp. An item can have multiple stop events (an abandoned
-// attempt, then a later real finish) — only the latest one reflects
-// current reality; see sweep_test.go's
-// TestSweepOnce_UsesLatestStopEvent_WhenMultipleExist for why using an
-// older one would cause premature deletion.
+// latestStopEvents returns, for every item with at least one
+// VideoPlaybackStopped activity-log event, that event's MOST RECENT
+// timestamp — unconditionally, with no cutoff/grace-period filtering here.
+// An item can have multiple stop events (an abandoned attempt, then a
+// later real finish) — only the latest one reflects current reality; see
+// sweep_test.go's TestSweepOnce_UsesLatestStopEvent_WhenMultipleExist for
+// why using an older one would cause premature deletion.
+//
+// Movies and TV have independently configurable grace periods (see
+// config.go's MoviesGracePeriod/TVGracePeriod), and this function doesn't
+// know an item's kind — that's only known once matched against Jellyfin's
+// played-items list, which does carry Type. So the cutoff comparison
+// happens in sweep.go, per item, using whichever grace period applies to
+// its kind; this function only ever reports raw timestamps.
 //
 // The Activity Log is returned newest-first (confirmed against this
 // server), so the first VideoPlaybackStopped entry seen for a given item
 // IS its latest one — every later occurrence of that same item ID is
 // guaranteed older and can be skipped outright without comparing
 // timestamps. seenItem tracks which IDs have already been resolved so we
-// only ever record (and cutoff-check) each item once.
+// only ever record each item once.
 //
 // This is deliberately not "the moment it finished watching" on its own —
 // VideoPlaybackStopped fires on any stop, including someone quitting
@@ -164,8 +171,8 @@ func (c *jellyfinClient) seriesTvdbID(seriesID string) (string, error) {
 // not just current upstream docs) has no server-side event-type or
 // max-date filter on the Activity Log endpoint, so this fetches the whole
 // log and filters by type client-side.
-func (c *jellyfinClient) itemsStoppedBefore(cutoff time.Time) (map[string]time.Time, error) {
-	stoppedBefore := make(map[string]time.Time)
+func (c *jellyfinClient) latestStopEvents() (map[string]time.Time, error) {
+	latestStop := make(map[string]time.Time)
 	seenItem := make(map[string]bool)
 
 	startIndex := 0
@@ -184,10 +191,7 @@ func (c *jellyfinClient) itemsStoppedBefore(cutoff time.Time) (map[string]time.T
 				continue
 			}
 			seenItem[e.ItemID] = true
-
-			if e.Date.Before(cutoff) {
-				stoppedBefore[e.ItemID] = e.Date
-			}
+			latestStop[e.ItemID] = e.Date
 		}
 
 		startIndex += len(resp.Items)
@@ -196,5 +200,5 @@ func (c *jellyfinClient) itemsStoppedBefore(cutoff time.Time) (map[string]time.T
 		}
 	}
 
-	return stoppedBefore, nil
+	return latestStop, nil
 }
