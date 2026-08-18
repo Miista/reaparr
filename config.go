@@ -71,18 +71,22 @@ func loadConfig() (config, error) {
 	// this way (rather than a cron expression like POLL_SCHEDULE) because a
 	// grace period is a span of time from a reference point, not a
 	// recurring schedule — cron expressions don't express "wait this
-	// long", only "run at these moments".
-	moviesGraceRaw := envOr("GRACE_PERIOD_MOVIES", "7d")
+	// long", only "run at these moments". Named DELETE_*_AFTER (plain
+	// language, "delete once this much time has passed since watching")
+	// rather than GRACE_PERIOD_* — the grace-period concept is explained
+	// in the README, but the env var itself should read clearly even to
+	// someone who hasn't read that yet.
+	moviesGraceRaw := envOr("DELETE_MOVIES_AFTER", "7d")
 	moviesGrace, err := parseGracePeriod(moviesGraceRaw)
 	if err != nil {
-		return cfg, fmt.Errorf("invalid GRACE_PERIOD_MOVIES %q: %w", moviesGraceRaw, err)
+		return cfg, fmt.Errorf("invalid DELETE_MOVIES_AFTER %q: %w", moviesGraceRaw, err)
 	}
 	cfg.MoviesGracePeriod = moviesGrace
 
-	tvGraceRaw := envOr("GRACE_PERIOD_TV", "7d")
+	tvGraceRaw := envOr("DELETE_TV_SHOWS_AFTER", "7d")
 	tvGrace, err := parseGracePeriod(tvGraceRaw)
 	if err != nil {
-		return cfg, fmt.Errorf("invalid GRACE_PERIOD_TV %q: %w", tvGraceRaw, err)
+		return cfg, fmt.Errorf("invalid DELETE_TV_SHOWS_AFTER %q: %w", tvGraceRaw, err)
 	}
 	cfg.TVGracePeriod = tvGrace
 

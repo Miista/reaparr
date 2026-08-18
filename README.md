@@ -107,8 +107,8 @@ All configuration is via environment variables.
 | `RADARR_API_KEY` | — | Radarr API key. At least one of `RADARR_API_KEY`/`SONARR_API_KEY` is required; either alone is enough for a movies-only or TV-only setup |
 | `SONARR_URL` | `http://sonarr:8989` | Sonarr base URL |
 | `SONARR_API_KEY` | — | Sonarr API key. See `RADARR_API_KEY` above |
-| `GRACE_PERIOD_MOVIES` | `7d` | How long after the last `VideoPlaybackStopped` event a still-played movie must wait before deletion |
-| `GRACE_PERIOD_TV` | `7d` | Same, for TV episodes — configured independently of `GRACE_PERIOD_MOVIES`, e.g. a shorter grace period for movies (single-sitting watches) and a longer one for TV (a season pack might sit half-watched between episodes for a while) |
+| `DELETE_MOVIES_AFTER` | `7d` | How long after the last `VideoPlaybackStopped` event a still-played movie must wait before deletion (the grace period — see below) |
+| `DELETE_TV_SHOWS_AFTER` | `7d` | Same, for TV episodes — configured independently of `DELETE_MOVIES_AFTER`, e.g. a shorter grace period for movies (single-sitting watches) and a longer one for TV (a season pack might sit half-watched between episodes for a while) |
 | `POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 
@@ -146,8 +146,8 @@ reaparr:
     RADARR_API_KEY: ${RADARR_API_KEY}
     SONARR_URL: http://sonarr:8989
     SONARR_API_KEY: ${SONARR_API_KEY}
-    GRACE_PERIOD_MOVIES: 2d
-    GRACE_PERIOD_TV: 7d
+    DELETE_MOVIES_AFTER: 2d
+    DELETE_TV_SHOWS_AFTER: 7d
     POLL_SCHEDULE: "@hourly"
   networks:
     - media

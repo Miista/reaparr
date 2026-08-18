@@ -76,8 +76,8 @@ func TestLoadConfig_AcceptsBothRadarrAndSonarr(t *testing.T) {
 func TestLoadConfig_GracePeriodsDefaultToSevenDays(t *testing.T) {
 	clearArrEnv(t)
 	t.Setenv("RADARR_API_KEY", "radarr-key")
-	t.Setenv("GRACE_PERIOD_MOVIES", "")
-	t.Setenv("GRACE_PERIOD_TV", "")
+	t.Setenv("DELETE_MOVIES_AFTER", "")
+	t.Setenv("DELETE_TV_SHOWS_AFTER", "")
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -97,8 +97,8 @@ func TestLoadConfig_GracePeriodsDefaultToSevenDays(t *testing.T) {
 func TestLoadConfig_GracePeriodsAreIndependentlyConfigurable(t *testing.T) {
 	clearArrEnv(t)
 	t.Setenv("RADARR_API_KEY", "radarr-key")
-	t.Setenv("GRACE_PERIOD_MOVIES", "2d")
-	t.Setenv("GRACE_PERIOD_TV", "7d")
+	t.Setenv("DELETE_MOVIES_AFTER", "2d")
+	t.Setenv("DELETE_TV_SHOWS_AFTER", "7d")
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -115,19 +115,19 @@ func TestLoadConfig_GracePeriodsAreIndependentlyConfigurable(t *testing.T) {
 func TestLoadConfig_RejectsInvalidGracePeriodMovies(t *testing.T) {
 	clearArrEnv(t)
 	t.Setenv("RADARR_API_KEY", "radarr-key")
-	t.Setenv("GRACE_PERIOD_MOVIES", "bogus")
+	t.Setenv("DELETE_MOVIES_AFTER", "bogus")
 
 	if _, err := loadConfig(); err == nil {
-		t.Fatal("expected an error for an invalid GRACE_PERIOD_MOVIES value, got nil")
+		t.Fatal("expected an error for an invalid DELETE_MOVIES_AFTER value, got nil")
 	}
 }
 
 func TestLoadConfig_RejectsInvalidGracePeriodTV(t *testing.T) {
 	clearArrEnv(t)
 	t.Setenv("RADARR_API_KEY", "radarr-key")
-	t.Setenv("GRACE_PERIOD_TV", "bogus")
+	t.Setenv("DELETE_TV_SHOWS_AFTER", "bogus")
 
 	if _, err := loadConfig(); err == nil {
-		t.Fatal("expected an error for an invalid GRACE_PERIOD_TV value, got nil")
+		t.Fatal("expected an error for an invalid DELETE_TV_SHOWS_AFTER value, got nil")
 	}
 }
