@@ -3,9 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/rs/zerolog"
 )
 
 // jellyfinClient polls Jellyfin for played items and playback-stopped
@@ -17,7 +18,7 @@ type jellyfinClient struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
-	log        *slog.Logger
+	log        zerolog.Logger
 }
 
 type jellyfinUser struct {

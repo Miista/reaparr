@@ -8,7 +8,7 @@ package main
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,15 +19,13 @@ import (
 func main() {
 	cfg, err := loadConfig()
 	if err != nil {
-		// Logger isn't built yet (LOG_LEVEL itself may be what's unparsed),
-		// so fall back to the default logger.
-		slog.Error("config error", "error", err)
+		// Logger isn't built yet (LOG_LEVEL itself may be what's unparsed).
+		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		os.Exit(1)
 	}
 
 	logger := newLogger(cfg.LogLevel)
-	slog.SetDefault(logger)
-	logger.Info("starting reaparr, configuration below", cfg.logAttrs()...)
+	cfg.logFields(logger.Info()).Msg("starting reaparr, configuration above")
 
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 
@@ -35,7 +33,7 @@ func main() {
 		baseURL:    cfg.JellyfinURL,
 		apiKey:     cfg.JellyfinAPIKey,
 		httpClient: httpClient,
-		log:        logger.With("component", "jellyfin"),
+		log:        withComponent(logger, "jellyfin"),
 	}
 
 	arr := &arrClient{
@@ -44,7 +42,7 @@ func main() {
 		sonarrURL:    cfg.SonarrURL,
 		sonarrAPIKey: cfg.SonarrAPIKey,
 		httpClient:   httpClient,
-		log:          logger.With("component", "arr"),
+		log:          withComponent(logger, "arr"),
 	}
 
 	sweeper := &sweeper{
@@ -53,12 +51,12 @@ func main() {
 		moviesGracePeriod: cfg.MoviesGracePeriod,
 		tvGracePeriod:     cfg.TVGracePeriod,
 		schedule:          cfg.PollSchedule,
-		log:               logger.With("component", "sweep"),
+		log:               withComponent(logger, "sweep"),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	sweeper.run(ctx)
-	logger.Info("shutting down")
+	logger.Info().Msg("shutting down")
 }

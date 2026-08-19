@@ -3,8 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
+
+	"github.com/rs/zerolog"
 )
 
 // arrClient talks to Radarr/Sonarr only. It must never be given
@@ -17,7 +18,7 @@ type arrClient struct {
 	sonarrURL    string
 	sonarrAPIKey string
 	httpClient   *http.Client
-	log          *slog.Logger
+	log          zerolog.Logger
 }
 
 // radarrMovie/sonarrSeries are the small subset of fields needed to match a
@@ -158,18 +159,18 @@ func (a *arrClient) deleteSeries(id string) error {
 }
 
 func (a *arrClient) doDelete(service, url, apiKey, id string) error {
-	a.log.Info(fmt.Sprintf("calling %s to delete item %s and its file", service, id))
+	a.log.Info().Msg(fmt.Sprintf("calling %s to delete item %s and its file", service, id))
 
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
-		a.log.Error(fmt.Sprintf("could not build the delete request for %s item %s — this is a bug, nothing was sent: %v", service, id, err))
+		a.log.Error().Msg(fmt.Sprintf("could not build the delete request for %s item %s — this is a bug, nothing was sent: %v", service, id, err))
 		return err
 	}
 	req.Header.Set("X-Api-Key", apiKey)
 
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
-		a.log.Error(fmt.Sprintf("could not reach %s to delete item %s — nothing was deleted: %v", service, id, err))
+		a.log.Error().Msg(fmt.Sprintf("could not reach %s to delete item %s — nothing was deleted: %v", service, id, err))
 		return err
 	}
 	defer resp.Body.Close()
@@ -177,10 +178,10 @@ func (a *arrClient) doDelete(service, url, apiKey, id string) error {
 	if resp.StatusCode >= 300 {
 		var body map[string]any
 		_ = json.NewDecoder(resp.Body).Decode(&body)
-		a.log.Error(fmt.Sprintf("%s refused to delete item %s (%s) — nothing was deleted: %v", service, id, resp.Status, body))
+		a.log.Error().Msg(fmt.Sprintf("%s refused to delete item %s (%s) — nothing was deleted: %v", service, id, resp.Status, body))
 		return fmt.Errorf("delete failed: %s: %v", resp.Status, body)
 	}
 
-	a.log.Info(fmt.Sprintf("%s confirmed the delete of item %s — the downloads/qBittorrent copy is untouched", service, id))
+	a.log.Info().Msg(fmt.Sprintf("%s confirmed the delete of item %s — the downloads/qBittorrent copy is untouched", service, id))
 	return nil
 }

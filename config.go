@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"github.com/rs/zerolog"
 )
 
 type config struct {
@@ -30,23 +31,22 @@ type config struct {
 	SonarrAPIKey string
 }
 
-// logAttrs returns the config as slog fields for the startup log line. API
-// keys are redacted to a presence check — never logged in full, even at
-// debug level, since these are live credentials for services that can
-// delete files.
-func (c config) logAttrs() []any {
-	return []any{
-		"log_level", c.LogLevel,
-		"movies_grace_period", c.MoviesGracePeriod.String(),
-		"tv_grace_period", c.TVGracePeriod.String(),
-		"poll_schedule", c.PollScheduleRaw,
-		"jellyfin_url", c.JellyfinURL,
-		"jellyfin_api_key_set", c.JellyfinAPIKey != "",
-		"radarr_url", c.RadarrURL,
-		"radarr_api_key_set", c.RadarrAPIKey != "",
-		"sonarr_url", c.SonarrURL,
-		"sonarr_api_key_set", c.SonarrAPIKey != "",
-	}
+// logFields attaches the config as fields on a zerolog event, for the
+// startup log line. API keys are redacted to a presence check — never
+// logged in full, even at debug level, since these are live credentials
+// for services that can delete files.
+func (c config) logFields(e *zerolog.Event) *zerolog.Event {
+	return e.
+		Str("log_level", c.LogLevel).
+		Str("movies_grace_period", c.MoviesGracePeriod.String()).
+		Str("tv_grace_period", c.TVGracePeriod.String()).
+		Str("poll_schedule", c.PollScheduleRaw).
+		Str("jellyfin_url", c.JellyfinURL).
+		Bool("jellyfin_api_key_set", c.JellyfinAPIKey != "").
+		Str("radarr_url", c.RadarrURL).
+		Bool("radarr_api_key_set", c.RadarrAPIKey != "").
+		Str("sonarr_url", c.SonarrURL).
+		Bool("sonarr_api_key_set", c.SonarrAPIKey != "")
 }
 
 // cronParser accepts both standard 5-field cron expressions and the

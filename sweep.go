@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"github.com/rs/zerolog"
 )
 
 // mediaKind distinguishes which *arr API owns an item.
@@ -52,7 +52,7 @@ type sweeper struct {
 	tvGracePeriod     time.Duration
 
 	schedule cron.Schedule
-	log      *slog.Logger
+	log      zerolog.Logger
 }
 
 func (s *sweeper) run(ctx context.Context) {
@@ -76,26 +76,26 @@ func (s *sweeper) run(ctx context.Context) {
 }
 
 func (s *sweeper) sweepOnce() {
-	s.log.Info("starting a sweep")
+	s.log.Info().Msg("starting a sweep")
 
 	safety := s.checkHardlinkSafety()
 
 	now := time.Now().UTC()
-	s.log.Debug(fmt.Sprintf("grace periods for this sweep: movies=%s, tv=%s", s.moviesGracePeriod, s.tvGracePeriod))
+	s.log.Debug().Msg(fmt.Sprintf("grace periods for this sweep: movies=%s, tv=%s", s.moviesGracePeriod, s.tvGracePeriod))
 
 	latestStop, err := s.jellyfin.latestStopEvents()
 	if err != nil {
-		s.log.Error(fmt.Sprintf("could not read jellyfin's activity log this sweep, will try again next time: %v", err))
+		s.log.Error().Msg(fmt.Sprintf("could not read jellyfin's activity log this sweep, will try again next time: %v", err))
 		return
 	}
-	s.log.Debug(fmt.Sprintf("jellyfin's activity log mentions %d distinct items (played or not, recently stopped or long ago)", len(latestStop)))
+	s.log.Debug().Msg(fmt.Sprintf("jellyfin's activity log mentions %d distinct items (played or not, recently stopped or long ago)", len(latestStop)))
 
 	playedItems, err := s.currentlyPlayedItems()
 	if err != nil {
-		s.log.Error(fmt.Sprintf("could not check jellyfin's current watched state this sweep, will try again next time: %v", err))
+		s.log.Error().Msg(fmt.Sprintf("could not check jellyfin's current watched state this sweep, will try again next time: %v", err))
 		return
 	}
-	s.log.Debug(fmt.Sprintf("%d items are currently marked played by jellyfin", len(playedItems)))
+	s.log.Debug().Msg(fmt.Sprintf("%d items are currently marked played by jellyfin", len(playedItems)))
 
 	var due []jellyfinItem
 	for _, item := range playedItems {
@@ -109,12 +109,12 @@ func (s *sweeper) sweepOnce() {
 			continue
 		}
 
-		s.log.Info(fmt.Sprintf("'%s' is watched and past its %s grace period (stopped playing %s) — will delete it now", displayTitle(item), gracePeriod, stoppedAt.Format("2006-01-02 15:04")))
+		s.log.Info().Msg(fmt.Sprintf("'%s' is watched and past its %s grace period (stopped playing %s) — will delete it now", displayTitle(item), gracePeriod, stoppedAt.Format("2006-01-02 15:04")))
 		due = append(due, item)
 	}
 
 	if len(due) == 0 {
-		s.log.Info(fmt.Sprintf("sweep finished: nothing due for deletion (%d currently played)", len(playedItems)))
+		s.log.Info().Msg(fmt.Sprintf("sweep finished: nothing due for deletion (%d currently played)", len(playedItems)))
 		return
 	}
 
@@ -122,12 +122,12 @@ func (s *sweeper) sweepOnce() {
 	for _, item := range due {
 		resolved, ok, err := s.resolveToArr(item, safety)
 		if err != nil {
-			s.log.Error(fmt.Sprintf("could not look up '%s' in radarr/sonarr, will retry next sweep: %v", displayTitle(item), err))
+			s.log.Error().Msg(fmt.Sprintf("could not look up '%s' in radarr/sonarr, will retry next sweep: %v", displayTitle(item), err))
 			failed++
 			continue
 		}
 		if !ok {
-			s.log.Warn(fmt.Sprintf("'%s' is watched and past its grace period, but radarr/sonarr doesn't know about it — nothing to delete, skipping", displayTitle(item)))
+			s.log.Warn().Msg(fmt.Sprintf("'%s' is watched and past its grace period, but radarr/sonarr doesn't know about it — nothing to delete, skipping", displayTitle(item)))
 			skipped++
 			continue
 		}
@@ -140,16 +140,16 @@ func (s *sweeper) sweepOnce() {
 			deleteErr = s.arr.deleteSeries(resolved.id)
 		}
 		if deleteErr != nil {
-			s.log.Error(fmt.Sprintf("failed to delete '%s' (%s id %s), will retry next sweep: %v", resolved.title, resolved.kind, resolved.id, deleteErr))
+			s.log.Error().Msg(fmt.Sprintf("failed to delete '%s' (%s id %s), will retry next sweep: %v", resolved.title, resolved.kind, resolved.id, deleteErr))
 			failed++
 			continue
 		}
 
-		s.log.Info(fmt.Sprintf("deleted '%s' (%s id %s)", resolved.title, resolved.kind, resolved.id))
+		s.log.Info().Msg(fmt.Sprintf("deleted '%s' (%s id %s)", resolved.title, resolved.kind, resolved.id))
 		cleaned++
 	}
 
-	s.log.Info(fmt.Sprintf("sweep finished: %d due, %d deleted, %d skipped, %d failed", len(due), cleaned, skipped, failed))
+	s.log.Info().Msg(fmt.Sprintf("sweep finished: %d due, %d deleted, %d skipped, %d failed", len(due), cleaned, skipped, failed))
 }
 
 // gracePeriodFor returns the grace period that applies to an item, based on
@@ -172,17 +172,17 @@ func (s *sweeper) currentlyPlayedItems() ([]jellyfinItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.log.Debug(fmt.Sprintf("found %d jellyfin users to check", len(users)))
+	s.log.Debug().Msg(fmt.Sprintf("found %d jellyfin users to check", len(users)))
 
 	seen := make(map[string]bool)
 	var items []jellyfinItem
 	for _, u := range users {
 		userItems, err := s.jellyfin.playedItems(u.ID)
 		if err != nil {
-			s.log.Error(fmt.Sprintf("failed to fetch played items for user '%s', skipping: %v", u.Name, err))
+			s.log.Error().Msg(fmt.Sprintf("failed to fetch played items for user '%s', skipping: %v", u.Name, err))
 			continue
 		}
-		s.log.Debug(fmt.Sprintf("'%s' has %d played items in jellyfin", u.Name, len(userItems)))
+		s.log.Debug().Msg(fmt.Sprintf("'%s' has %d played items in jellyfin", u.Name, len(userItems)))
 
 		for _, item := range userItems {
 			if seen[item.ID] {
@@ -216,9 +216,9 @@ func (s *sweeper) checkHardlinkSafety() hardlinkSafety {
 	if s.arr.hasRadarr() {
 		usesHardlinks, err := s.arr.radarrUsesHardlinks()
 		if err != nil {
-			s.log.Error(fmt.Sprintf("could not check radarr's hardlink setting this sweep, treating radarr as unsafe until confirmed: %v", err))
+			s.log.Error().Msg(fmt.Sprintf("could not check radarr's hardlink setting this sweep, treating radarr as unsafe until confirmed: %v", err))
 		} else if !usesHardlinks {
-			s.log.Error("radarr is NOT using hardlinks — deleting a movie would delete the only copy and break any active seed. Skipping all movie deletions this sweep. Enable 'Use Hardlinks instead of Copy' in Radarr's Media Management settings.")
+			s.log.Error().Msg("radarr is NOT using hardlinks — deleting a movie would delete the only copy and break any active seed. Skipping all movie deletions this sweep. Enable 'Use Hardlinks instead of Copy' in Radarr's Media Management settings.")
 		} else {
 			safety.radarrSafe = true
 		}
@@ -227,9 +227,9 @@ func (s *sweeper) checkHardlinkSafety() hardlinkSafety {
 	if s.arr.hasSonarr() {
 		usesHardlinks, err := s.arr.sonarrUsesHardlinks()
 		if err != nil {
-			s.log.Error(fmt.Sprintf("could not check sonarr's hardlink setting this sweep, treating sonarr as unsafe until confirmed: %v", err))
+			s.log.Error().Msg(fmt.Sprintf("could not check sonarr's hardlink setting this sweep, treating sonarr as unsafe until confirmed: %v", err))
 		} else if !usesHardlinks {
-			s.log.Error("sonarr is NOT using hardlinks — deleting an episode would delete the only copy and break any active seed. Skipping all episode deletions this sweep. Enable 'Use Hardlinks instead of Copy' in Sonarr's Media Management settings.")
+			s.log.Error().Msg("sonarr is NOT using hardlinks — deleting an episode would delete the only copy and break any active seed. Skipping all episode deletions this sweep. Enable 'Use Hardlinks instead of Copy' in Sonarr's Media Management settings.")
 		} else {
 			safety.sonarrSafe = true
 		}
@@ -257,15 +257,15 @@ func (s *sweeper) resolveToArr(item jellyfinItem, safety hardlinkSafety) (resolv
 	switch item.Type {
 	case "Movie":
 		if !s.arr.hasRadarr() {
-			s.log.Debug(fmt.Sprintf("radarr isn't configured, ignoring watched movie '%s'", item.Name))
+			s.log.Debug().Msg(fmt.Sprintf("radarr isn't configured, ignoring watched movie '%s'", item.Name))
 			return resolvedArrItem{}, false, nil
 		}
 		if !safety.radarrSafe {
-			s.log.Debug(fmt.Sprintf("skipping '%s': radarr's hardlink setting isn't safe this sweep", item.Name))
+			s.log.Debug().Msg(fmt.Sprintf("skipping '%s': radarr's hardlink setting isn't safe this sweep", item.Name))
 			return resolvedArrItem{}, false, nil
 		}
 		if item.ProviderIds.Tmdb == "" {
-			s.log.Warn(fmt.Sprintf("jellyfin has no TMDB id for watched movie '%s', cannot match it to radarr", item.Name))
+			s.log.Warn().Msg(fmt.Sprintf("jellyfin has no TMDB id for watched movie '%s', cannot match it to radarr", item.Name))
 			return resolvedArrItem{}, false, nil
 		}
 		movie, ok, err := s.arr.findMovieByTmdbID(item.ProviderIds.Tmdb)
@@ -279,11 +279,11 @@ func (s *sweeper) resolveToArr(item jellyfinItem, safety hardlinkSafety) (resolv
 
 	case "Episode":
 		if !s.arr.hasSonarr() {
-			s.log.Debug(fmt.Sprintf("sonarr isn't configured, ignoring watched episode '%s' of '%s'", item.Name, item.SeriesName))
+			s.log.Debug().Msg(fmt.Sprintf("sonarr isn't configured, ignoring watched episode '%s' of '%s'", item.Name, item.SeriesName))
 			return resolvedArrItem{}, false, nil
 		}
 		if !safety.sonarrSafe {
-			s.log.Debug(fmt.Sprintf("skipping '%s': sonarr's hardlink setting isn't safe this sweep", item.SeriesName))
+			s.log.Debug().Msg(fmt.Sprintf("skipping '%s': sonarr's hardlink setting isn't safe this sweep", item.SeriesName))
 			return resolvedArrItem{}, false, nil
 		}
 		tvdbID, err := s.jellyfin.seriesTvdbID(item.SeriesID)
@@ -291,7 +291,7 @@ func (s *sweeper) resolveToArr(item jellyfinItem, safety hardlinkSafety) (resolv
 			return resolvedArrItem{}, false, err
 		}
 		if tvdbID == "" {
-			s.log.Warn(fmt.Sprintf("jellyfin has no TVDB id for '%s' (series of watched episode '%s'), cannot match it to sonarr", item.SeriesName, item.Name))
+			s.log.Warn().Msg(fmt.Sprintf("jellyfin has no TVDB id for '%s' (series of watched episode '%s'), cannot match it to sonarr", item.SeriesName, item.Name))
 			return resolvedArrItem{}, false, nil
 		}
 		series, ok, err := s.arr.findSeriesByTvdbID(tvdbID)
