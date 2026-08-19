@@ -88,7 +88,7 @@ func (s *sweeper) sweepOnce() {
 		s.log.Error("could not read jellyfin's activity log this sweep, will try again next time", "error", err)
 		return
 	}
-	s.log.Debug("found items with at least one playback-stopped event", "count", len(latestStop))
+	s.log.Debug("jellyfin's activity log mentions this many distinct items (played or not, recently stopped or long ago — this is just raw log size, not a decision by itself)", "activity_log_item_count", len(latestStop))
 
 	playedItems, err := s.currentlyPlayedItems()
 	if err != nil {
@@ -114,7 +114,7 @@ func (s *sweeper) sweepOnce() {
 	}
 
 	if len(due) == 0 {
-		s.log.Info("sweep finished: nothing is due for deletion right now", "currently_played_items", len(playedItems), "items_with_a_stop_event", len(latestStop))
+		s.log.Info("sweep finished: nothing is due for deletion right now", "currently_played_items", len(playedItems), "activity_log_item_count", len(latestStop))
 		return
 	}
 
@@ -149,7 +149,7 @@ func (s *sweeper) sweepOnce() {
 		cleaned++
 	}
 
-	s.log.Info("sweep finished", "currently_played_items", len(playedItems), "items_with_a_stop_event", len(latestStop), "due_for_deletion", len(due), "successfully_deleted", cleaned, "skipped_not_in_arr", skipped, "failed_to_delete", failed)
+	s.log.Info("sweep finished", "currently_played_items", len(playedItems), "activity_log_item_count", len(latestStop), "due_for_deletion", len(due), "successfully_deleted", cleaned, "skipped_not_in_arr", skipped, "failed_to_delete", failed)
 }
 
 // gracePeriodFor returns the grace period that applies to an item, based on
