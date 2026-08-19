@@ -27,7 +27,7 @@ func main() {
 
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
-	logger.Info("starting reaparr", cfg.logAttrs()...)
+	logger.Info("starting reaparr, configuration below", cfg.logAttrs()...)
 
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 

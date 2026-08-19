@@ -16,5 +16,5 @@ func testLogger(t *testing.T) *slog.Logger {
 	if testing.Verbose() {
 		w = os.Stderr
 	}
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	return slog.New(newCompactHandler(w, slog.LevelDebug))
 }
