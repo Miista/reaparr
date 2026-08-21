@@ -191,13 +191,42 @@ func TestSweepOnce_LeavesItemAlone_StoppedButNotPastGracePeriod(t *testing.T) {
 	}))
 	defer arrSrv.Close()
 
+	// This case has nothing due for Radarr/Sonarr deletion — a real bug
+	// once had sweepOnce return early here without ever reaching Seerr
+	// cleanup, silently skipping it on every sweep with no due items
+	// (the common case). seerrDeleteCalls asserts it still runs.
+	var seerrDeleteCalls int32
+	seerrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/request":
+			json.NewEncoder(w).Encode(seerrRequestsResponse{
+				PageInfo: seerrPageInfo{Results: 1},
+				Results: []seerrRequest{
+					{ID: 1, Media: seerrMedia{ID: 21, TmdbID: 1315772, Status: 7, MediaType: "movie"}},
+				},
+			})
+		case r.URL.Path == "/api/v1/movie/1315772":
+			json.NewEncoder(w).Encode(seerrTitledMedia{Title: "Minions & Monsters"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/media/21":
+			atomic.AddInt32(&seerrDeleteCalls, 1)
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer seerrSrv.Close()
+
 	arr := &arrClient{radarrURL: arrSrv.URL, radarrAPIKey: "k", sonarrURL: arrSrv.URL, sonarrAPIKey: "k", httpClient: arrSrv.Client(), log: testLogger(t)}
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 7 * 24 * time.Hour, tvGracePeriod: 7 * 24 * time.Hour, log: testLogger(t)}
+	seerr := &seerrClient{baseURL: seerrSrv.URL, apiKey: "k", httpClient: seerrSrv.Client(), log: testLogger(t)}
+	sw := &sweeper{jellyfin: jellyfin, arr: arr, seerr: seerr, moviesGracePeriod: 7 * 24 * time.Hour, tvGracePeriod: 7 * 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
 	if got := atomic.LoadInt32(&deleteCalls); got != 0 {
 		t.Fatalf("expected 0 delete calls, item hasn't cleared its grace period yet, got %d", got)
+	}
+	if got := atomic.LoadInt32(&seerrDeleteCalls); got != 1 {
+		t.Fatalf("expected seerr cleanup to still run when nothing is due for radarr/sonarr, got %d seerr delete calls", got)
 	}
 }
 

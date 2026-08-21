@@ -116,6 +116,7 @@ func (s *sweeper) sweepOnce() {
 
 	if len(due) == 0 {
 		s.log.Info().Msg(fmt.Sprintf("sweep finished: nothing due for deletion (%d currently played)", len(playedItems)))
+		s.cleanUpSeerr()
 		return
 	}
 
