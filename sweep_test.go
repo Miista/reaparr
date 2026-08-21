@@ -687,3 +687,93 @@ func TestGracePeriodFor_EpisodeUsesTVGracePeriod(t *testing.T) {
 		t.Fatalf("expected TV grace period, got %v", got)
 	}
 }
+
+// Seerr is entirely optional — a sweeper with no seerr client configured
+// (the zero value, as every other test in this file uses) must not panic
+// and must not attempt any Seerr calls.
+func TestCleanUpSeerr_NilClient_NoOp(t *testing.T) {
+	sw := &sweeper{log: testLogger(t)}
+	sw.cleanUpSeerr() // must not panic
+}
+
+func TestCleanUpSeerr_NotConfigured_NoRequestSent(t *testing.T) {
+	requestSent := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestSent = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sw := &sweeper{
+		seerr: &seerrClient{baseURL: srv.URL, apiKey: "", httpClient: srv.Client(), log: testLogger(t)},
+		log:   testLogger(t),
+	}
+	sw.cleanUpSeerr()
+
+	if requestSent {
+		t.Fatal("expected no HTTP request when seerr has no api key configured")
+	}
+}
+
+// A stale request found and successfully deleted.
+func TestCleanUpSeerr_DeletesStaleMedia(t *testing.T) {
+	var deleteCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/request":
+			json.NewEncoder(w).Encode(seerrRequestsResponse{
+				PageInfo: seerrPageInfo{Results: 1},
+				Results: []seerrRequest{
+					{ID: 1, Media: seerrMedia{ID: 21, TmdbID: 1315772, Status: 7, MediaType: "movie"}},
+				},
+			})
+		case r.URL.Path == "/api/v1/movie/1315772":
+			json.NewEncoder(w).Encode(seerrTitledMedia{Title: "Minions & Monsters"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/media/21":
+			atomic.AddInt32(&deleteCalls, 1)
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	sw := &sweeper{
+		seerr: &seerrClient{baseURL: srv.URL, apiKey: "k", httpClient: srv.Client(), log: testLogger(t)},
+		log:   testLogger(t),
+	}
+	sw.cleanUpSeerr()
+
+	if got := atomic.LoadInt32(&deleteCalls); got != 1 {
+		t.Fatalf("expected 1 delete call, got %d", got)
+	}
+}
+
+// A failed Seerr delete must not panic or block — it's self-healing by
+// design (see SEERR_PLAN.md), so the item is simply left for next sweep.
+func TestCleanUpSeerr_DeleteFailure_DoesNotPanic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/request":
+			json.NewEncoder(w).Encode(seerrRequestsResponse{
+				PageInfo: seerrPageInfo{Results: 1},
+				Results: []seerrRequest{
+					{ID: 1, Media: seerrMedia{ID: 21, TmdbID: 1315772, Status: 7, MediaType: "movie"}},
+				},
+			})
+		case r.URL.Path == "/api/v1/movie/1315772":
+			json.NewEncoder(w).Encode(seerrTitledMedia{Title: "Minions & Monsters"})
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	sw := &sweeper{
+		seerr: &seerrClient{baseURL: srv.URL, apiKey: "k", httpClient: srv.Client(), log: testLogger(t)},
+		log:   testLogger(t),
+	}
+	sw.cleanUpSeerr() // must not panic
+}

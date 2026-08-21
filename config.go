@@ -29,6 +29,14 @@ type config struct {
 	RadarrAPIKey string
 	SonarrURL    string
 	SonarrAPIKey string
+
+	// Seerr is entirely optional — if unset, Reaparr never talks to it at
+	// all. When configured, Reaparr cleans up stale Seerr requests left
+	// behind by Seerr's own "Media Availability Sync" job, which correctly
+	// marks a deleted title's media record as DELETED but does not clean
+	// up the associated request record(s) — a real, confirmed gap.
+	SeerrURL    string
+	SeerrAPIKey string
 }
 
 // logFields attaches the config as fields on a zerolog event, for the
@@ -46,7 +54,8 @@ func (c config) logFields(e *zerolog.Event) *zerolog.Event {
 		Str("radarr_url", c.RadarrURL).
 		Bool("radarr_api_key_set", c.RadarrAPIKey != "").
 		Str("sonarr_url", c.SonarrURL).
-		Bool("sonarr_api_key_set", c.SonarrAPIKey != "")
+		Bool("sonarr_api_key_set", c.SonarrAPIKey != "").
+		Bool("seerr_configured", c.SeerrAPIKey != "")
 }
 
 // cronParser accepts both standard 5-field cron expressions and the
@@ -64,6 +73,8 @@ func loadConfig() (config, error) {
 		SonarrURL:       envOr("SONARR_URL", "http://sonarr:8989"),
 		RadarrAPIKey:    os.Getenv("RADARR_API_KEY"),
 		SonarrAPIKey:    os.Getenv("SONARR_API_KEY"),
+		SeerrURL:        envOr("SEERR_URL", "http://seerr:5055"),
+		SeerrAPIKey:     os.Getenv("SEERR_API_KEY"),
 	}
 
 	// A Go duration string extended with "d"/"w" suffixes (see

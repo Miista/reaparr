@@ -45,9 +45,17 @@ func main() {
 		log:          withComponent(logger, "arr"),
 	}
 
+	seerr := &seerrClient{
+		baseURL:    cfg.SeerrURL,
+		apiKey:     cfg.SeerrAPIKey,
+		httpClient: httpClient,
+		log:        withComponent(logger, "seerr"),
+	}
+
 	sweeper := &sweeper{
 		jellyfin:          jellyfin,
 		arr:               arr,
+		seerr:             seerr,
 		moviesGracePeriod: cfg.MoviesGracePeriod,
 		tvGracePeriod:     cfg.TVGracePeriod,
 		schedule:          cfg.PollSchedule,

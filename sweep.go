@@ -43,6 +43,7 @@ const (
 type sweeper struct {
 	jellyfin *jellyfinClient
 	arr      *arrClient
+	seerr    *seerrClient
 
 	// Movies and TV are gated by independent grace periods — a household
 	// might want a short one for movies (single-sitting watches) and a
@@ -150,6 +151,45 @@ func (s *sweeper) sweepOnce() {
 	}
 
 	s.log.Info().Msg(fmt.Sprintf("sweep finished: %d due, %d deleted, %d skipped, %d failed", len(due), cleaned, skipped, failed))
+
+	s.cleanUpSeerr()
+}
+
+// cleanUpSeerr deletes Seerr media records whose title has already been
+// deleted but whose request record was left behind by Seerr's own "Media
+// Availability Sync" job — see SEERR_PLAN.md. Entirely independent of the
+// Radarr/Sonarr deletion loop above: a query, not a delete-triggered
+// action, so it self-heals regardless of what deleted the title or
+// whether a previous attempt at this same cleanup failed (see
+// SEERR_PLAN.md's "self-healing" reasoning). Failures here are logged but
+// never fail the sweep or affect the cleaned/skipped/failed counters
+// above — Seerr tidiness is secondary to the Radarr/Sonarr deletion,
+// which already succeeded independently by this point.
+func (s *sweeper) cleanUpSeerr() {
+	if s.seerr == nil || !s.seerr.hasSeerr() {
+		return
+	}
+
+	stale, err := s.seerr.deletedRequests()
+	if err != nil {
+		s.log.Warn().Msg(fmt.Sprintf("could not check seerr for stale requests this sweep, will try again next time: %v", err))
+		return
+	}
+	if len(stale) == 0 {
+		return
+	}
+
+	var cleaned int
+	for _, m := range stale {
+		if err := s.seerr.deleteMedia(m.mediaID); err != nil {
+			s.log.Warn().Msg(fmt.Sprintf("could not delete seerr's stale request for '%s' (media id %d), will retry next sweep: %v", m.title, m.mediaID, err))
+			continue
+		}
+		s.log.Info().Msg(fmt.Sprintf("deleted seerr's stale request for '%s' (media id %d) — its title was already gone", m.title, m.mediaID))
+		cleaned++
+	}
+
+	s.log.Info().Msg(fmt.Sprintf("seerr cleanup finished: %d stale, %d deleted", len(stale), cleaned))
 }
 
 // gracePeriodFor returns the grace period that applies to an item, based on

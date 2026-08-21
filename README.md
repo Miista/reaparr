@@ -82,6 +82,18 @@ this setting — a documented upstream quirk Reaparr can't detect or
 control, but which only applies to that one deliberate, human-triggered
 action, not Reaparr's ongoing cleanup.)
 
+## Seerr cleanup (optional)
+
+If `SEERR_API_KEY` is set, Reaparr also cleans up a gap in Seerr's own
+"Media Availability Sync" job: when a title's file is deleted (by Reaparr
+or anything else), that job correctly marks the title's media record as
+deleted, but leaves the associated request record behind — it just sits
+there, stale, forever. Every sweep, Reaparr independently asks Seerr which
+requests currently point at deleted media and deletes those media records
+(which cascades to their requests) — a query, not something triggered by
+Reaparr's own deletions, so it cleans up regardless of what deleted the
+title and naturally retries on the next sweep if a delete call fails.
+
 ## Requirements
 
 - Jellyfin, Radarr, and/or Sonarr already set up and reachable on the same
@@ -111,6 +123,8 @@ All configuration is via environment variables.
 | `DELETE_TV_SHOWS_AFTER` | `7d` | Same, for TV episodes — configured independently of `DELETE_MOVIES_AFTER`, e.g. a shorter grace period for movies (single-sitting watches) and a longer one for TV (a season pack might sit half-watched between episodes for a while) |
 | `POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
+| `SEERR_URL` | `http://seerr:5055` | Seerr base URL. Entirely optional — see "Seerr cleanup" below |
+| `SEERR_API_KEY` | — | Seerr API key. If unset, Reaparr never talks to Seerr at all |
 
 Both grace-period variables accept Go duration strings (`45m`, `6h`, `168h`,
 `1h30m`) plus `d` (days) and `w` (weeks) suffixes — e.g. `7d`, `2w`.

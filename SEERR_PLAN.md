@@ -158,11 +158,11 @@ instance, not guessed from docs)
    `media/` subdirectory — see git history for why that distinction
    matters) with `SEERR_URL`/`SEERR_API_KEY` added to the compose env.
 
-## Open question for whoever picks this up
+## Resolved: title lookup
 
-The exact shape of `seerrDeletedMedia` / whether a title lookup is needed
-for a good log line wasn't fully resolved — the live `/request?filter=deleted`
-response was fetched and inspected for `id`/`status`/`media.status`/
-`media.tmdbId`, but not checked closely for a `media.title`-equivalent
-field. Check the real response shape before assuming a second API call
-is needed just to get a readable title for logging.
+Confirmed the `/request?filter=deleted` response's nested `media` object
+has no title field — only `tmdbId`/`tvdbId`/`imdbId`/`status`/etc. The
+user explicitly asked for titles in the log line, so `seerr.go` fetches
+one via a supplementary `GET /movie/{tmdbId}` or `GET /tv/{tmdbId}` call
+per distinct stale media record (deduplicated first, so this is at most
+one extra call per title, not per request).
