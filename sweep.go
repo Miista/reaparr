@@ -102,15 +102,17 @@ func (s *sweeper) sweepOnce() {
 	for _, item := range playedItems {
 		stoppedAt, stopped := latestStop[item.ID]
 		if !stopped {
+			s.log.Debug().Msg(fmt.Sprintf("'%s' is played but has no stop event in jellyfin's activity log, skipping", displayTitle(item)))
 			continue
 		}
 
 		gracePeriod := s.gracePeriodFor(item)
 		if !stoppedAt.Before(now.Add(-gracePeriod)) {
+			s.log.Debug().Msg(fmt.Sprintf("'%s' stopped playing %s, still within its %s grace period", displayTitle(item), stoppedAt.Local().Format("2006-01-02 15:04"), gracePeriod))
 			continue
 		}
 
-		s.log.Info().Msg(fmt.Sprintf("'%s' is watched and past its %s grace period (stopped playing %s) — will delete it now", displayTitle(item), gracePeriod, stoppedAt.Format("2006-01-02 15:04")))
+		s.log.Info().Msg(fmt.Sprintf("'%s' is watched and past its %s grace period (stopped playing %s) — will delete it now", displayTitle(item), gracePeriod, stoppedAt.Local().Format("2006-01-02 15:04")))
 		due = append(due, item)
 	}
 
@@ -224,6 +226,9 @@ func (s *sweeper) currentlyPlayedItems() ([]jellyfinItem, error) {
 			continue
 		}
 		s.log.Debug().Msg(fmt.Sprintf("'%s' has %d played items in jellyfin", u.Name, len(userItems)))
+		for _, item := range userItems {
+			s.log.Debug().Msg(fmt.Sprintf("'%s' played: '%s' (id %s)", u.Name, displayTitle(item), item.ID))
+		}
 
 		for _, item := range userItems {
 			if seen[item.ID] {

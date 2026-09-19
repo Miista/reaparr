@@ -14,6 +14,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	_ "time/tzdata" // embed tzdata so TZ resolves without OS packages (distroless has none)
 )
 
 func main() {
