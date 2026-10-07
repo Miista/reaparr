@@ -46,6 +46,23 @@ type Sweeper interface {
 	NextRun() time.Time
 	// RefreshPreview rebuilds the cached due list from live data now.
 	RefreshPreview()
+	// Keep marks a listed item as a keeper (a season keeps its series).
+	Keep(id string) error
+	// KeepSelected is Keep for several items; returns how many
+	// movies/series were tagged.
+	KeepSelected(ids []string) (int, error)
+	// Kept lists every keeper.
+	Kept() ([]KeptItem, error)
+	// Unkeep removes keeper status from a Radarr movie / Sonarr series.
+	Unkeep(service string, id int) error
+}
+
+// KeptItem is a movie or series marked as a keeper (never deleted).
+type KeptItem struct {
+	Service string `json:"service"` // "radarr" or "sonarr"
+	ID      int    `json:"id"`      // Radarr movie / Sonarr series ID
+	Title   string `json:"title"`
+	Kind    string `json:"kind"` // "movie" or "series"
 }
 
 // DeleteResult summarises a manual multi-item delete.
@@ -116,6 +133,10 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/due", s.handleDue)
 	mux.HandleFunc("/api/due/delete", s.handleDeleteDue)
 	mux.HandleFunc("/api/due/delete-selected", s.handleDeleteSelected)
+	mux.HandleFunc("/api/keep", s.handleKeep)
+	mux.HandleFunc("/api/keep-selected", s.handleKeepSelected)
+	mux.HandleFunc("/api/kept", s.handleKept)
+	mux.HandleFunc("/api/unkeep", s.handleUnkeep)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +162,82 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status["next_run"] = s.sweeper.NextRun().Format(time.RFC3339)
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+// handleKeep marks one listed item as a keeper.
+func (s *Server) handleKeep(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := readJSON(r, &req); err != nil || req.ID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
+		return
+	}
+	if err := s.sweeper.Keep(req.ID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleKeepSelected marks several listed items as keepers.
+func (s *Server) handleKeepSelected(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := readJSON(r, &req); err != nil || len(req.IDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ids is required"})
+		return
+	}
+	tagged, err := s.sweeper.KeepSelected(req.IDs)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"kept": tagged})
+}
+
+// handleKept lists every keeper.
+func (s *Server) handleKept(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	kept, err := s.sweeper.Kept()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"kept": kept})
+}
+
+// handleUnkeep removes keeper status from one movie/series.
+func (s *Server) handleUnkeep(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Service string `json:"service"`
+		ID      int    `json:"id"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Service == "" || req.ID == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "service and id are required"})
+		return
+	}
+	if err := s.sweeper.Unkeep(req.Service, req.ID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // handleDeleteSelected deletes the given IDs (each re-checked live).
@@ -381,6 +478,7 @@ func applySettingsPatch(st *store.Settings, incoming map[string]any) {
 	setString("poll_schedule", &st.PollSchedule)
 	setString("movies_grace_period", &st.MoviesGracePeriod)
 	setString("tv_grace_period", &st.TVGracePeriod)
+	setString("keep_tag", &st.KeepTag)
 
 	if !resolved.IsManaged("daemon_enabled") {
 		if v, ok := incoming["daemon_enabled"].(bool); ok {
@@ -439,6 +537,7 @@ func publicSettings(resolved settings.Resolved) map[string]any {
 			"movies_grace_period": st.MoviesGracePeriod,
 			"tv_grace_period":     st.TVGracePeriod,
 			"daemon_enabled":      st.DaemonEnabled,
+			"keep_tag":            st.KeepTag,
 		},
 		"env_managed": resolved.Managed,
 	}

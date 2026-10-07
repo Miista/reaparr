@@ -91,6 +91,8 @@ func newFakeArrCatalog(t *testing.T, movies []radarrMovie, series []sonarrSeries
 			json.NewEncoder(w).Encode(series)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/config/mediamanagement":
 			json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: true})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/tag":
+			w.Write([]byte("[]"))
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -108,9 +110,21 @@ func newFakeArrCatalog(t *testing.T, movies []radarrMovie, series []sonarrSeries
 // runs at the start of every sweep — this keeps that boilerplate in one
 // place rather than repeating it in every inline fake.
 func withHardlinksEnabled(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return withNoTags(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/config/mediamanagement" {
 			json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: true})
+			return
+		}
+		next(w, r)
+	})
+}
+
+// withNoTags answers GET /api/v3/tag with an empty tag list (no keepers),
+// which every sweep now reads before considering anything.
+func withNoTags(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/tag" {
+			w.Write([]byte("[]"))
 			return
 		}
 		next(w, r)
@@ -464,7 +478,7 @@ func TestSweepOnce_RadarrUnsafe_DoesNotBlockSonarr(t *testing.T) {
 	})
 
 	var movieDeletes int32
-	radarrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	radarrSrv := httptest.NewServer(withNoTags(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/config/mediamanagement" {
 			json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: false}) // radarr: unsafe
 			return
@@ -518,7 +532,7 @@ func TestSweepOnce_SonarrUnsafe_DoesNotBlockRadarr(t *testing.T) {
 	}))
 	defer radarrSrv.Close()
 
-	sonarrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	sonarrSrv := httptest.NewServer(withNoTags(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/config/mediamanagement" {
 			json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: false}) // sonarr: unsafe
 			return

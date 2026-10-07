@@ -57,7 +57,9 @@ type sweeper struct {
 	// daemonEnabled gates only the scheduled sweep (see liveSweeper.sweep);
 	// the preview and the dashboard's delete buttons work either way.
 	daemonEnabled bool
-	log           zerolog.Logger
+	// keepTag is the Radarr/Sonarr tag marking keepers (see keep.go).
+	keepTag string
+	log     zerolog.Logger
 }
 
 func (s *sweeper) run(ctx context.Context) {
@@ -201,6 +203,14 @@ func (s *sweeper) findCandidates() ([]dueItem, error) {
 	}
 	s.log.Debug().Msg(fmt.Sprintf("%d items are currently marked played by jellyfin", len(playedItems)))
 
+	// Keepers must be known before anything is considered: if the keep tag
+	// can't be read, abort rather than risk treating a keeper as deletable.
+	keep, err := s.resolveKeepTags()
+	if err != nil {
+		s.log.Error().Msg(fmt.Sprintf("could not read the keep tag this sweep, will try again next time: %v", err))
+		return nil, err
+	}
+
 	now := time.Now().UTC()
 	s.log.Debug().Msg(fmt.Sprintf("grace periods for this sweep: movies=%s, tv=%s", s.moviesGracePeriod, s.tvGracePeriod))
 
@@ -210,14 +220,14 @@ func (s *sweeper) findCandidates() ([]dueItem, error) {
 			continue
 		}
 		stoppedAt, stopped := latestStop[item.ID]
-		if d, ok := s.evaluateMovie(item, stoppedAt, stopped, now, safety); ok {
+		if d, ok := s.evaluateMovie(item, stoppedAt, stopped, now, safety, keep); ok {
 			due = append(due, d)
 		}
 	}
 
 	lookups := newSonarrLookups(s)
 	for _, g := range s.groupPlayedEpisodes(playedItems, latestStop) {
-		if d, ok := s.evaluateSeason(g, now, safety, lookups); ok {
+		if d, ok := s.evaluateSeason(g, now, safety, lookups, keep); ok {
 			due = append(due, d)
 		}
 	}
@@ -257,7 +267,7 @@ func (s *sweeper) findOneCandidate(id string) (dueItem, bool, error) {
 // algorithm. ok=false means this movie isn't a candidate at all (no stop
 // event yet, or Radarr isn't configured); a movie still within its grace
 // period is a candidate with due=false.
-func (s *sweeper) evaluateMovie(item jellyfinItem, stoppedAt time.Time, stopped bool, now time.Time, safety hardlinkSafety) (dueItem, bool) {
+func (s *sweeper) evaluateMovie(item jellyfinItem, stoppedAt time.Time, stopped bool, now time.Time, safety hardlinkSafety, keep keepTagIDs) (dueItem, bool) {
 	if !stopped {
 		s.log.Debug().Msg(fmt.Sprintf("'%s' is played but has no stop event in jellyfin's activity log, skipping", item.Name))
 		return dueItem{}, false
@@ -284,6 +294,10 @@ func (s *sweeper) evaluateMovie(item jellyfinItem, stoppedAt time.Time, stopped 
 		}
 		d.reason = reason
 		return d, true
+	}
+	if hasTag(movie.Tags, keep.radarr) {
+		s.log.Debug().Msg(fmt.Sprintf("'%s' is marked as a keeper, skipping", item.Name))
+		return dueItem{}, false
 	}
 	d.resolved = true
 	d.movie = movie

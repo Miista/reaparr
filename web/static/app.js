@@ -5,7 +5,7 @@ const SERVICES = [
   { id: 'sonarr', name: 'Sonarr', hue: 200, required: false, desc: 'Leave blank for a movie-only deployment. At least one of Radarr/Sonarr must be configured.' },
 ];
 
-const SETTINGS_KEYS = ['movies_grace_period', 'tv_grace_period', 'poll_schedule', 'log_level', 'daemon_enabled'];
+const SETTINGS_KEYS = ['movies_grace_period', 'tv_grace_period', 'poll_schedule', 'log_level', 'daemon_enabled', 'keep_tag'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -53,6 +53,13 @@ function App() {
     deletingID: null,
     deletingSelected: false,
     selected: [], // ids of selected rows
+    keepingID: null,
+    keepingSelected: false,
+
+    kept: [],
+    keptLoading: false,
+    keptError: '',
+    unkeepingID: null,
     deleteResult: '',
 
     missingServices: [],
@@ -77,7 +84,8 @@ function App() {
 
     async mounted() {
       setInterval(() => { this.now = Date.now(); }, 30000);
-      await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections()]);
+      document.addEventListener('keydown', (e) => this.onDialogKey(e));
+      await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections(), this.loadKept()]);
       this.testConfiguredConnections();
     },
 
@@ -183,7 +191,12 @@ function App() {
     // deleteSelected deletes the selected rows (each re-checked live first).
     async deleteSelected() {
       const ids = [...this.selected];
-      if (!confirm(`Delete ${ids.length} selected item(s) now? Each is re-checked first; only what still qualifies is deleted.`)) return;
+      if (!await this.ask({
+        title: `Delete ${ids.length} selected item${ids.length === 1 ? '' : 's'}?`,
+        message: 'Each is re-checked first; only what still qualifies is deleted. Files are removed through Radarr/Sonarr.',
+        confirmLabel: `Delete ${ids.length}`,
+        tone: 'danger',
+      })) return;
 
       this.deletingSelected = true;
       this.dueError = '';
@@ -206,8 +219,148 @@ function App() {
       }
     },
 
+    async keepItem(item) {
+      if (item.kind === 'season') {
+        const series = item.title.split(' — ')[0];
+        if (!await this.ask({
+          title: `Keep ${series}?`,
+          message: 'This keeps the whole series in Sonarr — every season, not just this one.',
+          confirmLabel: 'Keep series',
+          tone: 'keep',
+        })) return;
+      }
+
+      this.keepingID = item.id;
+      this.dueError = '';
+      try {
+        const res = await fetch('/api/keep', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: item.id }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Keep failed.');
+        }
+        await Promise.all([this.loadDue(), this.loadKept()]);
+      } catch (err) {
+        this.dueError = err.message;
+      } finally {
+        this.keepingID = null;
+      }
+    },
+
+    // --- Confirmation dialog --------------------------------------------
+
+    dialog: null, // { title, message, confirmLabel, tone, resolve }
+
+    // ask shows the styled confirmation dialog and resolves to true/false.
+    ask(opts) {
+      return new Promise((resolve) => {
+        this.dialog = { ...opts, resolve };
+        setTimeout(() => document.querySelector('.dialog .btn-confirm')?.focus());
+      });
+    },
+
+    closeDialog(answer) {
+      const d = this.dialog;
+      this.dialog = null;
+      d?.resolve(answer);
+    },
+
+    // Escape cancels. Enter needs no handler: the confirm button is focused
+    // when the dialog opens, so Enter activates whichever button has focus.
+    onDialogKey(e) {
+      if (this.dialog && e.key === 'Escape') this.closeDialog(false);
+    },
+
+    // keepSelected marks every selected row as a keeper. Seasons keep their
+    // whole series, so the dialog says so when any are selected.
+    async keepSelected() {
+      const ids = [...this.selected];
+      const rows = this.due.filter((item) => ids.includes(item.id));
+      const seasons = rows.filter((item) => item.kind === 'season').length;
+      if (!await this.ask({
+        title: `Keep ${ids.length} selected item${ids.length === 1 ? '' : 's'}?`,
+        message: seasons
+          ? 'They will never be deleted. Selected seasons keep their whole series in Sonarr — every season.'
+          : 'They will never be deleted, not on schedule and not by hand.',
+        confirmLabel: `Keep ${ids.length}`,
+        tone: 'keep',
+      })) return;
+
+      this.keepingSelected = true;
+      this.dueError = '';
+      this.deleteResult = '';
+      try {
+        const res = await fetch('/api/keep-selected', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Keep failed.');
+        this.selected = [];
+        await Promise.all([this.loadDue(), this.loadKept()]);
+      } catch (err) {
+        this.dueError = err.message;
+      } finally {
+        this.keepingSelected = false;
+      }
+    },
+
+    // --- Kept -----------------------------------------------------------
+
+    async loadKept() {
+      this.keptLoading = true;
+      this.keptError = '';
+      try {
+        const res = await fetch('/api/kept');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Failed to load keepers.');
+        this.kept = (data.kept || []).sort((a, b) => a.title.localeCompare(b.title));
+      } catch (err) {
+        this.keptError = err.message;
+      } finally {
+        this.keptLoading = false;
+      }
+    },
+
+    async unkeep(k) {
+      if (!await this.ask({
+        title: `Stop keeping ${k.title}?`,
+        message: 'It can be deleted again once watched.',
+        confirmLabel: 'Unkeep',
+        tone: 'neutral',
+      })) return;
+
+      this.unkeepingID = k.service + k.id;
+      this.keptError = '';
+      try {
+        const res = await fetch('/api/unkeep', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ service: k.service, id: k.id }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Unkeep failed.');
+        }
+        this.kept = this.kept.filter((x) => !(x.service === k.service && x.id === k.id));
+      } catch (err) {
+        this.keptError = err.message;
+      } finally {
+        this.unkeepingID = null;
+      }
+    },
+
     async deleteItem(item) {
-      if (!confirm(`Delete '${item.title}' now? It is re-checked first.`)) return;
+      if (!await this.ask({
+        title: `Delete ${item.title}?`,
+        message: 'It is re-checked first, then its files are removed through Radarr/Sonarr.',
+        confirmLabel: 'Delete',
+        tone: 'danger',
+      })) return;
 
       this.deletingID = item.id;
       this.dueError = '';
@@ -308,7 +461,8 @@ function App() {
       const v = this.settings.values;
       return (managed.movies_grace_period || parseDuration(v.movies_grace_period) !== null)
         && (managed.tv_grace_period || parseDuration(v.tv_grace_period) !== null)
-        && (managed.poll_schedule || this.cronHuman(v.poll_schedule) !== null);
+        && (managed.poll_schedule || this.cronHuman(v.poll_schedule) !== null)
+        && (managed.keep_tag || !!(v.keep_tag || '').trim());
     },
 
     get settingsBar() {

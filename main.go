@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -176,6 +177,10 @@ func buildSweeper(st *store.Store, httpClient *http.Client, logger zerolog.Logge
 		logger.Error().Msg(fmt.Sprintf("invalid tv grace period %q, falling back to 7d: %v", cfg.TVGracePeriod, err))
 		tvGrace = 7 * 24 * time.Hour
 	}
+	keepTag := strings.TrimSpace(cfg.KeepTag)
+	if keepTag == "" {
+		keepTag = store.DefaultSettings().KeepTag
+	}
 	schedule, err := cronParser.Parse(cfg.PollSchedule)
 	if err != nil {
 		logger.Error().Msg(fmt.Sprintf("invalid poll schedule %q, falling back to @hourly: %v", cfg.PollSchedule, err))
@@ -211,6 +216,7 @@ func buildSweeper(st *store.Store, httpClient *http.Client, logger zerolog.Logge
 		tvGracePeriod:     tvGrace,
 		schedule:          schedule,
 		daemonEnabled:     cfg.DaemonEnabled,
+		keepTag:           keepTag,
 		log:               withComponent(logger, "sweep"),
 	}
 }

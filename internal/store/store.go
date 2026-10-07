@@ -25,6 +25,9 @@ type Settings struct {
 	// deleted automatically — the dashboard still shows what's due, and
 	// deletions happen only via its buttons.
 	DaemonEnabled bool `json:"daemon_enabled"`
+	// KeepTag is the Radarr/Sonarr tag that marks a movie or series as a
+	// keeper: reaparr never deletes anything carrying it.
+	KeepTag string `json:"keep_tag"`
 }
 
 // DefaultSettings mirrors config.go's own defaults, so a fresh install's
@@ -37,6 +40,7 @@ func DefaultSettings() Settings {
 		MoviesGracePeriod: "7d",
 		TVGracePeriod:     "7d",
 		DaemonEnabled:     true,
+		KeepTag:           "reaparr-keep",
 	}
 }
 

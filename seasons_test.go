@@ -31,6 +31,10 @@ type fakeSonarr struct {
 	seasonPuts        int
 	deletedSeries     bool
 	hardlinksDisabled bool
+	tags              []arrTag // GET /api/v3/tag
+	seriesTags        []int    // tags on series 7
+	tagsFail          bool     // GET /api/v3/tag returns 500
+	editorBody        map[string]any
 }
 
 func newFakeSonarr(t *testing.T, episodes []sonarrEpisode) (*fakeSonarr, *httptest.Server) {
@@ -42,8 +46,22 @@ func newFakeSonarr(t *testing.T, episodes []sonarrEpisode) (*fakeSonarr, *httpte
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/config/mediamanagement":
 			json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: !f.hardlinksDisabled})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/tag":
+			if f.tagsFail {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(f.tags)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/tag":
+			var t arrTag
+			json.NewDecoder(r.Body).Decode(&t)
+			t.ID = 99
+			f.tags = append(f.tags, t)
+			json.NewEncoder(w).Encode(t)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v3/series/editor":
+			json.NewDecoder(r.Body).Decode(&f.editorBody)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series":
-			json.NewEncoder(w).Encode([]sonarrSeries{{ID: 7, Title: "Some Show", TvdbID: 410092}})
+			json.NewEncoder(w).Encode([]sonarrSeries{{ID: 7, Title: "Some Show", TvdbID: 410092, Tags: f.seriesTags}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/episode":
 			json.NewEncoder(w).Encode(episodes)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v3/episode/monitor":
@@ -333,5 +351,103 @@ func TestManualDelete_IgnoresGracePeriod(t *testing.T) {
 	}
 	if len(sonarr.deletedFileIDs) != 2 {
 		t.Fatalf("deleted %v, want both episode files", sonarr.deletedFileIDs)
+	}
+}
+
+// A series carrying the keep tag is never a candidate, so neither the sweep
+// nor a manual delete can touch any of its seasons.
+func TestKeeper_SeriesTagged_IsNeverDeleted(t *testing.T) {
+	sonarr, srv := newFakeSonarr(t, season1())
+	sonarr.tags = []arrTag{{ID: 5, Label: "reaparr-keep"}}
+	sonarr.seriesTags = []int{5}
+	sw := newSeasonSweeper(t,
+		map[string][]jellyfinItem{"u1": {playedEpisode("e1", 1, 1), playedEpisode("e2", 1, 2)}},
+		[]jellyfinActivityEntry{stopped("e2", 48*time.Hour)},
+		srv)
+	sw.keepTag = "reaparr-keep"
+
+	if candidates, _ := sw.findCandidates(); len(candidates) != 0 {
+		t.Fatalf("kept series listed: %+v", candidates)
+	}
+	if _, ok, _ := sw.findOneCandidate(seasonItemID("jf-series-1", 1)); ok {
+		t.Fatal("kept season can be found for a manual delete")
+	}
+	sw.sweepOnce()
+	if len(sonarr.deletedFileIDs) != 0 {
+		t.Fatalf("deleted %v from a kept series", sonarr.deletedFileIDs)
+	}
+}
+
+// If the keep tag can't be read, nothing may be deleted — a keeper must
+// never be lost just because Sonarr was briefly unreachable.
+func TestKeeper_TagLookupFails_DeletesNothing(t *testing.T) {
+	sonarr, srv := newFakeSonarr(t, season1())
+	sonarr.tagsFail = true
+	sw := newSeasonSweeper(t,
+		map[string][]jellyfinItem{"u1": {playedEpisode("e1", 1, 1), playedEpisode("e2", 1, 2)}},
+		[]jellyfinActivityEntry{stopped("e2", 48*time.Hour)},
+		srv)
+	sw.keepTag = "reaparr-keep"
+
+	if _, err := sw.findCandidates(); err == nil {
+		t.Fatal("expected an error when the keep tag can't be read")
+	}
+	sw.sweepOnce()
+	if len(sonarr.deletedFileIDs) != 0 {
+		t.Fatalf("deleted %v although keepers couldn't be determined", sonarr.deletedFileIDs)
+	}
+}
+
+// Keeping a season creates the tag if needed and tags the whole series.
+func TestKeeper_KeepSeason_TagsSeries(t *testing.T) {
+	sonarr, srv := newFakeSonarr(t, season1())
+	sw := newSeasonSweeper(t,
+		map[string][]jellyfinItem{"u1": {playedEpisode("e1", 1, 1), playedEpisode("e2", 1, 2)}},
+		[]jellyfinActivityEntry{stopped("e2", 48*time.Hour)},
+		srv)
+	sw.keepTag = "reaparr-keep"
+
+	d, ok, err := sw.findOneCandidate(seasonItemID("jf-series-1", 1))
+	if err != nil || !ok {
+		t.Fatalf("findOneCandidate = ok %v, err %v", ok, err)
+	}
+	if err := sw.keep(d); err != nil {
+		t.Fatal(err)
+	}
+	if len(sonarr.tags) != 1 || sonarr.tags[0].Label != "reaparr-keep" {
+		t.Fatalf("tags = %+v, want reaparr-keep created", sonarr.tags)
+	}
+	body := sonarr.editorBody
+	if body["applyTags"] != "add" || body["seriesIds"].([]any)[0] != float64(7) || body["tags"].([]any)[0] != float64(99) {
+		t.Fatalf("series editor body = %v, want series 7 tagged with 99", body)
+	}
+}
+
+// Keeping several seasons of one series tags that series once, in one
+// bulk call.
+func TestKeeper_KeepMany_DedupesSeries(t *testing.T) {
+	episodes := append(season1(),
+		sonarrEpisode{ID: 201, SeasonNumber: 2, EpisodeNumber: 1, HasFile: true, EpisodeFileID: 21, AirDateUtc: aired()},
+	)
+	sonarr, srv := newFakeSonarr(t, episodes)
+	sw := newSeasonSweeper(t,
+		map[string][]jellyfinItem{"u1": {playedEpisode("e1", 1, 1), playedEpisode("e2", 1, 2), playedEpisode("e3", 2, 1)}},
+		[]jellyfinActivityEntry{stopped("e2", 48*time.Hour), stopped("e3", 48*time.Hour)},
+		srv)
+	sw.keepTag = "reaparr-keep"
+
+	candidates, err := sw.findCandidates()
+	if err != nil || len(candidates) != 2 {
+		t.Fatalf("candidates = %+v, err %v; want both seasons", candidates, err)
+	}
+	tagged, err := sw.keepMany(candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tagged != 1 {
+		t.Errorf("tagged = %d, want 1 (one series)", tagged)
+	}
+	if ids := sonarr.editorBody["seriesIds"].([]any); len(ids) != 1 || ids[0] != float64(7) {
+		t.Errorf("seriesIds = %v, want [7]", ids)
 	}
 }

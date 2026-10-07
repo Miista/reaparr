@@ -208,15 +208,110 @@ func (l *liveSweeper) NextRun() time.Time {
 // dropFromPreview removes one just-deleted item from the cached preview so
 // the dashboard doesn't keep listing it until the next refresh.
 func (l *liveSweeper) dropFromPreview(id string) {
+	l.dropFromPreviewWhere(func(d dueItem) bool { return d.id == id })
+}
+
+func (l *liveSweeper) dropFromPreviewWhere(drop func(dueItem) bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	kept := l.cachedDue[:0:0]
+	remaining := l.cachedDue[:0:0]
 	for _, d := range l.cachedDue {
-		if d.id != id {
-			kept = append(kept, d)
+		if !drop(d) {
+			remaining = append(remaining, d)
 		}
 	}
-	l.cachedDue = kept
+	l.cachedDue = remaining
+}
+
+// Keep implements api.Sweeper: marks a listed movie or season as a keeper
+// by tagging it in Radarr/Sonarr (a season keeps its whole series). The
+// item is re-checked live first, like a delete.
+func (l *liveSweeper) Keep(id string) error {
+	s := l.current()
+	d, ok, err := s.findOneCandidate(id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%s is no longer listed (re-verified just now)", id)
+	}
+	if err := s.keep(d); err != nil {
+		return err
+	}
+	if d.kind == kindSeason {
+		// Every season of the series is now kept.
+		l.dropFromPreviewWhere(func(x dueItem) bool { return x.season != nil && x.season.seriesID == d.season.seriesID })
+	} else {
+		l.dropFromPreview(id)
+	}
+	return nil
+}
+
+// KeepSelected implements api.Sweeper: Keep for several listed items at
+// once, after one fresh re-check. Returns how many movies/series were
+// tagged (seasons of one series count once).
+func (l *liveSweeper) KeepSelected(ids []string) (int, error) {
+	s := l.current()
+	candidates, err := s.findCandidates()
+	if err != nil {
+		return 0, err
+	}
+	selected := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		selected[id] = true
+	}
+	var targets []dueItem
+	keptSeries := map[int]bool{}
+	for _, d := range candidates {
+		if selected[d.id] {
+			targets = append(targets, d)
+			if d.kind == kindSeason && d.resolved {
+				keptSeries[d.season.seriesID] = true
+			}
+		}
+	}
+	tagged, err := s.keepMany(targets)
+	if err != nil {
+		// Part may have been tagged; rebuild from live data to show the
+		// true state rather than guessing.
+		l.RefreshPreview()
+		return tagged, err
+	}
+	l.dropFromPreviewWhere(func(x dueItem) bool {
+		return (selected[x.id] && x.kind == kindMovie && x.resolved) || (x.season != nil && keptSeries[x.season.seriesID])
+	})
+	return tagged, nil
+}
+
+// Kept implements api.Sweeper: everything carrying the keep tag.
+func (l *liveSweeper) Kept() ([]api.KeptItem, error) {
+	items, err := l.current().keptItems()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.KeptItem, 0, len(items))
+	for _, k := range items {
+		kind := "movie"
+		if k.service == serviceSonarr {
+			kind = "series"
+		}
+		out = append(out, api.KeptItem{Service: string(k.service), ID: k.id, Title: k.title, Kind: kind})
+	}
+	return out, nil
+}
+
+// Unkeep implements api.Sweeper: removes the keep tag; the item reappears
+// in the list on the preview refresh this triggers (if it's watched).
+func (l *liveSweeper) Unkeep(service string, id int) error {
+	svc := arrService(service)
+	if svc != serviceRadarr && svc != serviceSonarr {
+		return fmt.Errorf("unknown service %q", service)
+	}
+	if err := l.current().unkeep(svc, id); err != nil {
+		return err
+	}
+	go l.RefreshPreview()
+	return nil
 }
 
 // connectionTester implements api.ConnectionTester using one-off clients

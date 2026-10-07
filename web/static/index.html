@@ -35,12 +35,13 @@
     <div class="page-head">
       <nav class="tabs">
         <a :class="{ active: tab === 'due' }" @click="tab = 'due'">Due for deletion<span class="tab-badge" :class="{ hot: due.length }">{{ due.length }}</span></a>
+        <a :class="{ active: tab === 'kept' }" @click="tab = 'kept'">Kept<span class="tab-badge">{{ kept.length }}</span></a>
         <a :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Settings</a>
         <a :class="{ active: tab === 'connections' }" @click="tab = 'connections'">Connections</a>
       </nav>
       <div class="title-block">
-        <h1>{{ { due: 'Due for deletion', settings: 'Settings', connections: 'Connections' }[tab] }}</h1>
-        <p class="env-note" v-if="tab !== 'due'">
+        <h1>{{ { due: 'Due for deletion', kept: 'Kept', settings: 'Settings', connections: 'Connections' }[tab] }}</h1>
+        <p class="env-note" v-if="tab === 'settings' || tab === 'connections'">
           Fields locked with
           <span class="env-chip"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>ENV</span>
           are pinned by an environment variable and cannot be changed here.
@@ -55,8 +56,12 @@
           <span class="n" :class="{ hot: due.length }">{{ due.length }}</span>
           <span class="label">{{ due.length === 1 ? 'item due for deletion' : 'items due for deletion' }}</span>
         </div>
-        <!-- Delete sits left of Refresh so Refresh stays put when it appears. -->
-        <button class="btn btn-danger" v-if="selected.length" @click="deleteSelected" :disabled="deletingSelected || missingServices.length">
+        <!-- Selection actions sit left of Refresh so Refresh stays put when they appear. -->
+        <button class="btn btn-keep" v-if="selected.length" @click="keepSelected" :disabled="keepingSelected || deletingSelected || missingServices.length">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 2.5l6 2.5v4.5c0 3.8-2.6 6.6-6 8-3.4-1.4-6-4.2-6-8V5z"></path></svg>
+          {{ keepingSelected ? 'Keeping…' : `Keep ${selected.length} selected` }}
+        </button>
+        <button class="btn btn-danger" v-if="selected.length" @click="deleteSelected" :disabled="deletingSelected || keepingSelected || missingServices.length">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.6 8.5h5.8l.6-8.5"></path></svg>
           {{ deletingSelected ? 'Deleting…' : `Delete ${selected.length} selected` }}
         </button>
@@ -88,9 +93,14 @@
               <span class="primary-line" :class="deletionWhen(item).cls">{{ deletionWhen(item).main }}</span>
               <span class="sub">{{ deletionWhen(item).sub }}</span>
             </div>
-            <button class="btn-row-delete" @click="deleteItem(item)" :disabled="!item.resolved || deletingID === item.id">
-              {{ deletingID === item.id ? 'Deleting…' : 'Delete now' }}
-            </button>
+            <div class="row-actions">
+              <button class="btn-row-keep" @click="keepItem(item)" :disabled="!item.resolved || keepingID === item.id" :title="item.kind === 'season' ? 'Keeps the whole series' : 'Never delete this movie'">
+                {{ keepingID === item.id ? 'Keeping…' : 'Keep' }}
+              </button>
+              <button class="btn-row-delete" @click="deleteItem(item)" :disabled="!item.resolved || deletingID === item.id">
+                {{ deletingID === item.id ? 'Deleting…' : 'Delete now' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -99,6 +109,36 @@
         <div class="icon"><img src="icon.png" alt=""></div>
         <span class="title">Nothing watched yet</span>
         <span class="sub">Watched movies, and TV seasons watched in full, will appear here. Delete them right away, or let the scheduled run delete them once their grace period has passed.</span>
+      </div>
+    </div>
+
+    <!-- Kept -->
+    <div class="stack" v-if="tab === 'kept'">
+      <p class="error-text" v-if="keptError">{{ keptError }}</p>
+
+      <div class="card table-card" v-if="kept.length">
+        <div class="table">
+          <div class="row kept head"><span>Title</span><span>Kept in</span><span></span></div>
+          <div class="row kept" v-for="k in kept" :key="k.service + k.id">
+            <div class="cell-title">
+              <div class="tile" :style="{ '--hue': hueFor(k.title) }">{{ k.title.charAt(0) }}</div>
+              <div class="cell-stack">
+                <span class="item-title" :title="k.title">{{ k.title }}</span>
+                <span class="kind" :class="k.kind === 'movie' ? 'movie' : 'season'">{{ k.kind }}</span>
+              </div>
+            </div>
+            <span class="primary-line">{{ k.service === 'radarr' ? 'Radarr' : 'Sonarr' }}</span>
+            <button class="btn-row-keep" @click="unkeep(k)" :disabled="unkeepingID === k.service + k.id">
+              {{ unkeepingID === k.service + k.id ? 'Removing…' : 'Unkeep' }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="empty" v-else-if="!keptLoading && !keptError">
+        <div class="icon"><img src="icon.png" alt=""></div>
+        <span class="title">No keepers yet</span>
+        <span class="sub">Press Keep on anything in "Due for deletion" to make sure it's never deleted.</span>
       </div>
     </div>
 
@@ -161,6 +201,26 @@
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#8e91a1" stroke-width="1.8"><path d="M3 4.5l3 3 3-3"></path></svg>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section class="card" style="--hue: 150">
+        <div class="accent"></div>
+        <div class="card-head" style="align-items:center">
+          <div class="card-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 2.5l6 2.5v4.5c0 3.8-2.6 6.6-6 8-3.4-1.4-6-4.2-6-8V5z"></path></svg></div>
+          <div class="card-text">
+            <h2>Keepers</h2>
+            <p>Movies and series carrying this Radarr/Sonarr tag are never deleted.</p>
+          </div>
+        </div>
+        <div class="card-grid">
+          <label class="field">
+            <span class="field-label">Keep tag
+              <span class="lock-label" v-if="settings.env_managed.keep_tag"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ settings.env_managed.keep_tag }}</span>
+            </span>
+            <input class="input" :class="{ invalid: !settings.env_managed.keep_tag && !(settings.values.keep_tag || '').trim() }" v-model="settings.values.keep_tag" :readonly="settings.env_managed.keep_tag ? true : null" placeholder="reaparr-keep">
+            <span class="field-help">Created in Radarr/Sonarr automatically the first time you keep something. Changing it doesn't move existing keepers to the new tag.</span>
+          </label>
         </div>
       </section>
 
@@ -238,6 +298,19 @@
       </div>
     </div>
   </main>
+
+  <div class="dialog-backdrop" v-if="dialog" @click.self="closeDialog(false)">
+    <div class="dialog" role="alertdialog" aria-modal="true" :class="dialog.tone">
+      <div class="dialog-text">
+        <h3>{{ dialog.title }}</h3>
+        <p>{{ dialog.message }}</p>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" @click="closeDialog(false)">Cancel</button>
+        <button class="btn btn-confirm" @click="closeDialog(true)">{{ dialog.confirmLabel }}</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="vendor/petite-vue.iife.js"></script>

@@ -131,7 +131,7 @@ func (l *sonarrLookups) seasonEpisodes(seriesID, season int) ([]sonarrEpisode, e
 // grace period has due=false. A row that can't be acted on carries
 // resolved=false and a reason (unsafe hardlinks, a lookup failure, or
 // untracked in Sonarr).
-func (s *sweeper) evaluateSeason(g *seasonGroup, now time.Time, safety hardlinkSafety, lookups *sonarrLookups) (dueItem, bool) {
+func (s *sweeper) evaluateSeason(g *seasonGroup, now time.Time, safety hardlinkSafety, lookups *sonarrLookups, keep keepTagIDs) (dueItem, bool) {
 	title := fmt.Sprintf("%s — Season %d", g.seriesName, g.season)
 
 	if !s.arr.hasSonarr() {
@@ -174,6 +174,10 @@ func (s *sweeper) evaluateSeason(g *seasonGroup, now time.Time, safety hardlinkS
 	}
 	if !found {
 		return unresolved("Series not found in Sonarr")
+	}
+	if hasTag(series.Tags, keep.sonarr) {
+		s.log.Debug().Msg(fmt.Sprintf("'%s' is marked as a keeper, skipping", title))
+		return dueItem{}, false
 	}
 	episodes, err := lookups.seasonEpisodes(series.ID, g.season)
 	if err != nil {

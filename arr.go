@@ -31,12 +31,14 @@ type radarrMovie struct {
 	ID     int    `json:"id"`
 	Title  string `json:"title"`
 	TmdbID int    `json:"tmdbId"`
+	Tags   []int  `json:"tags"`
 }
 
 type sonarrSeries struct {
 	ID     int    `json:"id"`
 	Title  string `json:"title"`
 	TvdbID int    `json:"tvdbId"`
+	Tags   []int  `json:"tags"`
 }
 
 // hasRadarr/hasSonarr report whether each service was actually configured —
@@ -177,7 +179,7 @@ func (a *arrClient) sonarrEpisodes(seriesID int) ([]sonarrEpisode, error) {
 // client doesn't model.
 func (a *arrClient) unmonitorSeason(seriesID, seasonNumber int, episodeIDs []int) error {
 	body := map[string]any{"episodeIds": episodeIDs, "monitored": false}
-	if err := a.send(http.MethodPut, a.sonarrURL+"/api/v3/episode/monitor", body); err != nil {
+	if err := a.send(http.MethodPut, a.sonarrURL+"/api/v3/episode/monitor", a.sonarrAPIKey, body); err != nil {
 		return fmt.Errorf("unmonitoring episodes: %w", err)
 	}
 
@@ -193,7 +195,7 @@ func (a *arrClient) unmonitorSeason(seriesID, seasonNumber int, episodeIDs []int
 			season["monitored"] = false
 		}
 	}
-	if err := a.send(http.MethodPut, seriesURL, series); err != nil {
+	if err := a.send(http.MethodPut, seriesURL, a.sonarrAPIKey, series); err != nil {
 		return fmt.Errorf("unmonitoring season: %w", err)
 	}
 	return nil
@@ -205,7 +207,7 @@ func (a *arrClient) unmonitorSeason(seriesID, seasonNumber int, episodeIDs []int
 func (a *arrClient) deleteEpisodeFiles(episodeFileIDs []int) error {
 	a.log.Info().Msg(fmt.Sprintf("calling sonarr to delete %d episode file(s)", len(episodeFileIDs)))
 	body := map[string]any{"episodeFileIds": episodeFileIDs}
-	if err := a.send(http.MethodDelete, a.sonarrURL+"/api/v3/episodefile/bulk", body); err != nil {
+	if err := a.send(http.MethodDelete, a.sonarrURL+"/api/v3/episodefile/bulk", a.sonarrAPIKey, body); err != nil {
 		a.log.Error().Msg(fmt.Sprintf("sonarr refused to delete episode files %v — nothing was deleted: %v", episodeFileIDs, err))
 		return err
 	}
@@ -213,9 +215,14 @@ func (a *arrClient) deleteEpisodeFiles(episodeFileIDs []int) error {
 	return nil
 }
 
-// send issues a Sonarr request with a JSON body, treating any non-2xx
-// status as an error.
-func (a *arrClient) send(method, url string, body any) error {
+// send issues a Radarr/Sonarr request with a JSON body, treating any
+// non-2xx status as an error.
+func (a *arrClient) send(method, url, apiKey string, body any) error {
+	return a.do(method, url, apiKey, body, nil)
+}
+
+// do is send that also decodes the JSON response into out (if non-nil).
+func (a *arrClient) do(method, url, apiKey string, body, out any) error {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -224,7 +231,7 @@ func (a *arrClient) send(method, url string, body any) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Api-Key", a.sonarrAPIKey)
+	req.Header.Set("X-Api-Key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.httpClient.Do(req)
@@ -235,6 +242,9 @@ func (a *arrClient) send(method, url string, body any) error {
 
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("%s %s failed: %s", method, url, resp.Status)
+	}
+	if out != nil {
+		return json.NewDecoder(resp.Body).Decode(out)
 	}
 	return nil
 }

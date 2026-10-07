@@ -63,6 +63,22 @@ that row. A genuine lookup or delete failure
 (e.g. Radarr/Sonarr unreachable) is logged as an error and naturally
 retried on the next sweep, since there's no state marking it as "handled."
 
+## Keepers
+
+A movie or series carrying the keep tag (`REAPARR_SETTING_KEEP_TAG`,
+default `reaparr-keep`) in Radarr/Sonarr is **never deleted** — not by the
+scheduled run, and not by the dashboard's delete buttons. Press **Keep** on
+a row in the dashboard — or select rows and press **Keep N selected** — to
+add the tag (Reaparr creates it in Radarr/Sonarr
+the first time), or add it yourself in Radarr/Sonarr. The **Kept** tab
+lists every keeper, with **Unkeep** to remove the tag.
+
+In Sonarr a tag applies to the whole series, so keeping one season keeps
+every season. If Reaparr can't read the tag from Radarr/Sonarr, it deletes
+nothing that run rather than risk deleting a keeper. The tag is unique to
+Reaparr, so it doesn't change which indexers, profiles or download clients
+apply to a title.
+
 ## What it will never do
 
 Reaparr only ever talks to Jellyfin (read-only) and Radarr/Sonarr (delete).
@@ -155,6 +171,7 @@ setting's key upper-cased, with `.` replaced by `_`.
 | `REAPARR_SETTING_TV_GRACE_PERIOD` | `7d` | Same, for TV seasons, measured from the last stop of any episode in the season — configured independently of the movies grace period |
 | `REAPARR_SETTING_POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
 | `REAPARR_SETTING_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
+| `REAPARR_SETTING_KEEP_TAG` | `reaparr-keep` | Radarr/Sonarr tag marking keepers — see "Keepers" below |
 | `REAPARR_SETTING_DAEMON_ENABLED` | `true` | Whether the scheduled sweep deletes automatically. When `false`, nothing is deleted on schedule — the dashboard still lists what's ripe for deletion and you delete from there. An unparseable value counts as `false` |
 
 Both grace-period variables accept Go duration strings (`45m`, `6h`, `168h`,
