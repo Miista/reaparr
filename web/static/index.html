@@ -145,7 +145,9 @@
 
       <div class="poster-grid" v-if="filteredLibrary.length">
         <div class="poster-card" v-for="it in filteredLibrary" :key="libKey(it)" :class="{ kept: it.kept }" :title="it.title + (it.year ? ' (' + it.year + ')' : '')">
-          <div class="cover" :style="{ '--hue': hueFor(it.title) }">
+          <div class="cover" :style="{ '--hue': hueFor(it.title) }" role="button" tabindex="0" :aria-pressed="it.kept"
+               :aria-label="(it.kept ? 'Unkeep ' : 'Keep ') + it.title"
+               @click="!libraryBusy && toggleKeep(it)" @keydown.enter.prevent="!libraryBusy && toggleKeep(it)" @keydown.space.prevent="!libraryBusy && toggleKeep(it)">
             <span class="cover-fallback">{{ it.title }}</span>
             <img :src="'/api/poster/' + it.service + '/' + it.id" alt="" loading="lazy" @error="$event.target.remove()">
             <span class="cover-kind" :class="it.kind">{{ it.kind }}</span>
