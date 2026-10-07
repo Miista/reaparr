@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,14 +19,17 @@ import (
 // (run) always reads through current(), never holding a stale sweeper
 // across a reload.
 //
-// It also caches the due list from the most recent sweep (cachedDue),
-// populated by sweepAndCache on every cron tick. The dashboard's GET
-// /api/due reads this cache rather than triggering its own live
-// Jellyfin/Radarr/Sonarr scan on every page load/poll — a manual delete,
-// however, always re-verifies that one specific item via findOneDue before
-// acting (see Delete below), so a cache that's gone stale since the last
-// sweep can never cause a wrong deletion, only a display that's briefly
-// behind reality until the next sweep refreshes it.
+// It also holds an in-memory preview of the due list (cachedDue), rebuilt
+// by refreshPreview on its own fixed interval (see main.go's
+// runPreviewLoop), independently of the deletion sweep. Both call the same
+// findDue, so the preview and the sweep never disagree on what counts as
+// due — the sweep simply runs its own fresh findDue rather than trusting
+// the preview. Nothing is persisted: after a restart the preview is
+// rebuilt straight away. The dashboard's GET /api/due reads this cache
+// rather than triggering its own live scan on every page load/poll — a
+// manual delete, however, always re-verifies that one specific item via
+// findOneDue before acting (see Delete below), so a stale preview can
+// never cause a wrong deletion.
 type liveSweeper struct {
 	mu        sync.RWMutex
 	cur       *sweeper
@@ -46,33 +50,44 @@ func (l *liveSweeper) current() *sweeper {
 	return l.cur
 }
 
-// sweepAndCache runs findDue exactly once, caches the result for the
-// dashboard's GET /api/due (see FindDue), and then runs the delete pass
-// over that same result — called by main.go's cron loop in place of
-// sweeper.sweepOnce directly, so a single scan per tick serves both the
-// cron daemon's own deletions and the dashboard's cached preview, rather
-// than each triggering its own separate live scan.
-func (l *liveSweeper) sweepAndCache() {
+// sweep runs one deletion sweep, gated on the required services being
+// configured — reaparr stays up (so they can be configured from the
+// dashboard) but refuses to sweep until they are.
+func (l *liveSweeper) sweep() {
 	s := l.current()
-	s.log.Info().Msg("starting a sweep")
+	if missing := s.missingServices(); len(missing) > 0 {
+		s.log.Warn().Msg(fmt.Sprintf("unable to run: required services not configured: %s", strings.Join(missing, ", ")))
+		return
+	}
+	s.sweepOnce()
+}
 
-	due, err := s.findDue()
+// refreshPreview rebuilds the dashboard's in-memory due list via the same
+// findDue the sweep uses. Skipped (leaving an empty list) while required
+// services are missing — the dashboard's banner explains why.
+func (l *liveSweeper) refreshPreview() {
+	s := l.current()
+
+	var due []dueItem
+	var err error
+	if len(s.missingServices()) == 0 {
+		due, err = s.findDue()
+	}
 
 	l.mu.Lock()
 	l.cachedDue = due
 	l.cachedErr = err
 	l.cachedAt = time.Now()
 	l.mu.Unlock()
+}
 
-	if err != nil {
-		// findDue already logged the specific cause.
-		return
-	}
-	s.deleteAllDue(due)
+// MissingServices implements api.Sweeper.
+func (l *liveSweeper) MissingServices() []string {
+	return l.current().missingServices()
 }
 
 // FindDue implements api.Sweeper, returning the cached due list from the
-// most recent sweep rather than triggering a fresh scan — see the
+// most recent preview refresh rather than triggering a fresh scan — see the
 // liveSweeper doc comment for why that's safe for a read-only preview.
 func (l *liveSweeper) FindDue() ([]api.DueItem, error) {
 	l.mu.RLock()

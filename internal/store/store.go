@@ -41,9 +41,10 @@ type Connection struct {
 	APIKey string `json:"api_key"`
 }
 
-// Connections holds every external service reaparr can talk to. Radarr and
-// Sonarr can't both be empty (see config.go's loadConfig); Seerr is always
-// fully optional.
+// Connections holds every external service reaparr can talk to, as entered
+// in the dashboard — env-var values are never written here (see
+// settings.ResolveConnections). The sweep requires Jellyfin, Radarr or
+// Sonarr, and Seerr (see sweeper.missingServices).
 type Connections struct {
 	Jellyfin Connection `json:"jellyfin"`
 	Radarr   Connection `json:"radarr"`

@@ -52,17 +52,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The very first boot ever (fresh data dir, nothing persisted yet)
-	// seeds the store from whatever env vars are set, so an
-	// env-vars-only deployment (the only mode reaparr supported before
-	// this dashboard existed) keeps working with zero config changes.
-	// Subsequent boots leave persisted values alone — env vars still win
-	// per-field via settings.Resolve/ResolveConnections either way, this
-	// seeding only matters for fields with no env var set at all, so
-	// their first-ever dashboard view shows the old defaults rather than
-	// store.DefaultSettings()'s bare fallbacks.
-	seedFromEnvOnFirstBoot(st)
-
+	// Env vars are never copied into the store: every read merges env
+	// (which wins per field) over persisted values via
+	// settings.Resolve/ResolveConnections, so the store only ever holds
+	// what was entered in the dashboard.
 	logLevel := settings.Resolve(currentSettings(st)).Settings.LogLevel
 	logger := newLogger(logLevel)
 
@@ -74,7 +67,15 @@ func main() {
 
 	tester := &connectionTester{httpClient: httpClient, log: withComponent(logger, "test-connection")}
 
-	apiServer := api.New(st, live, tester, reload, logger)
+	// A dashboard save also refreshes the preview right away, so the due
+	// list and the missing-services banner reflect the new configuration
+	// without waiting for the next preview tick.
+	reloadAndRefresh := func() {
+		reload()
+		go live.refreshPreview()
+	}
+
+	apiServer := api.New(st, live, tester, reloadAndRefresh, logger)
 	mux := http.NewServeMux()
 	apiServer.Routes(mux)
 	mux.Handle("/", noCache(http.FileServer(http.Dir(staticDir))))
@@ -96,6 +97,7 @@ func main() {
 	}()
 
 	go runCronLoop(ctx, live, st, logger)
+	go runPreviewLoop(ctx, live)
 
 	<-ctx.Done()
 	logger.Info().Msg("shutting down")
@@ -104,16 +106,37 @@ func main() {
 	_ = httpServer.Shutdown(shutdownCtx)
 }
 
+// previewRefreshInterval is how often the dashboard's in-memory due list
+// is rebuilt. Deliberately not configurable for now.
+const previewRefreshInterval = 15 * time.Minute
+
+// runPreviewLoop rebuilds the dashboard's due-list preview immediately on
+// startup and then every previewRefreshInterval, independently of the
+// deletion sweep's schedule (see liveSweeper.refreshPreview).
+func runPreviewLoop(ctx context.Context, live *liveSweeper) {
+	live.refreshPreview()
+
+	ticker := time.NewTicker(previewRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			live.refreshPreview()
+		}
+	}
+}
+
 // runCronLoop runs sweeps on the schedule currently in effect, via
-// liveSweeper.sweepAndCache rather than sweeper.sweepOnce directly, so each
-// tick's single findDue scan serves both the deletion pass and the
-// dashboard's cached preview (see adapter.go). Unlike the original
-// sweeper.run, this re-reads the schedule from the store before computing
-// each "next" fire time, so a dashboard edit to the poll schedule takes
-// effect without a restart — the previous sweeper.run (used in tests via a
-// fixed schedule) is left unchanged for that purpose.
+// liveSweeper.sweep rather than sweeper.sweepOnce directly, so each sweep
+// is gated on the required services being configured (see adapter.go).
+// Unlike the original sweeper.run, this re-reads the schedule from the
+// store before computing each "next" fire time, so a dashboard edit to the
+// poll schedule takes effect without a restart — the previous sweeper.run
+// (used in tests via a fixed schedule) is left unchanged for that purpose.
 func runCronLoop(ctx context.Context, live *liveSweeper, st *store.Store, logger zerolog.Logger) {
-	live.sweepAndCache()
+	live.sweep()
 
 	for {
 		schedule := live.current().schedule
@@ -126,7 +149,7 @@ func runCronLoop(ctx context.Context, live *liveSweeper, st *store.Store, logger
 			timer.Stop()
 			return
 		case <-timer.C:
-			live.sweepAndCache()
+			live.sweep()
 		}
 	}
 }
@@ -199,46 +222,6 @@ func currentConnections(st *store.Store) store.Connections {
 	var c store.Connections
 	st.View(func(state store.State) { c = state.Connections })
 	return c
-}
-
-// seedFromEnvOnFirstBoot writes env-sourced values into the store exactly
-// once — detected by the data dir having no prior config.json before
-// store.Open created a fresh default one (store.Open always leaves exactly
-// DefaultSettings()/DefaultConnections() in that case, so this just
-// confirms the store already matches the hardcoded defaults byte-for-byte
-// before overwriting, i.e. it's a fresh install, not a deliberate reset by
-// the user back to defaults).
-func seedFromEnvOnFirstBoot(st *store.Store) {
-	_ = st.Update(func(state *store.State) {
-		if state.Settings == store.DefaultSettings() {
-			state.Settings = store.Settings{
-				LogLevel:          envOr("LOG_LEVEL", store.DefaultSettings().LogLevel),
-				PollSchedule:      envOr("POLL_SCHEDULE", store.DefaultSettings().PollSchedule),
-				MoviesGracePeriod: envOr("DELETE_MOVIES_AFTER", store.DefaultSettings().MoviesGracePeriod),
-				TVGracePeriod:     envOr("DELETE_TV_SHOWS_AFTER", store.DefaultSettings().TVGracePeriod),
-			}
-		}
-		if state.Connections == store.DefaultConnections() {
-			state.Connections = store.Connections{
-				Jellyfin: store.Connection{
-					URL:    envOr("JELLYFIN_URL", store.DefaultConnections().Jellyfin.URL),
-					APIKey: os.Getenv("JELLYFIN_API_KEY"),
-				},
-				Radarr: store.Connection{
-					URL:    envOr("RADARR_URL", store.DefaultConnections().Radarr.URL),
-					APIKey: os.Getenv("RADARR_API_KEY"),
-				},
-				Sonarr: store.Connection{
-					URL:    envOr("SONARR_URL", store.DefaultConnections().Sonarr.URL),
-					APIKey: os.Getenv("SONARR_API_KEY"),
-				},
-				Seerr: store.Connection{
-					URL:    envOr("SEERR_URL", store.DefaultConnections().Seerr.URL),
-					APIKey: os.Getenv("SEERR_API_KEY"),
-				},
-			}
-		}
-	})
 }
 
 // noCache forces revalidation on every static asset request instead of

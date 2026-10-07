@@ -89,9 +89,9 @@ this setting — a documented upstream quirk Reaparr can't detect or
 control, but which only applies to that one deliberate, human-triggered
 action, not Reaparr's ongoing cleanup.)
 
-## Seerr cleanup (optional)
+## Seerr cleanup
 
-If `SEERR_API_KEY` is set, Reaparr also cleans up a gap in Seerr's own
+Reaparr also cleans up a gap in Seerr's own
 "Media Availability Sync" job: when a title's file is deleted (by Reaparr
 or anything else), that job correctly marks the title's media record as
 deleted, but leaves the associated request record behind — it just sits
@@ -103,12 +103,19 @@ title and naturally retries on the next sweep if a delete call fails.
 
 ## Requirements
 
-- Jellyfin, Radarr, and/or Sonarr already set up and reachable on the same
-  network as Reaparr. Sonarr is only needed if you have TV libraries;
-  Radarr only if you have movie libraries.
+- Jellyfin, Radarr and/or Sonarr, and Seerr already set up and reachable on
+  the same network as Reaparr. Sonarr is only needed if you have TV
+  libraries; Radarr only if you have movie libraries — but at least one of
+  the two is required.
 - A Jellyfin API key: **Dashboard → API Keys → +** in the Jellyfin admin UI.
 - A Radarr/Sonarr API key each: **Settings → General → Security → API Key**
   in their respective UIs.
+- A Seerr API key: **Settings → General → API Key** in Seerr.
+
+Until Jellyfin, Radarr or Sonarr, and Seerr each have both a URL and an API
+key configured, Reaparr refuses to sweep: it logs which services are
+missing, and the dashboard shows a "not running" banner naming them. The
+dashboard itself stays up so you can configure them there.
 - Developed and tested against Jellyfin 10.11.x. Jellyfin's Activity Log
   endpoint has no server-side event-type or date-range filter on this
   version — Reaparr fetches and filters it client-side, which is fine at
@@ -127,7 +134,7 @@ container restart.
 | Variable | Default | Description |
 |---|---|---|
 | `JELLYFIN_URL` | `http://jellyfin:8096` | Jellyfin base URL |
-| `JELLYFIN_API_KEY` | — | Jellyfin API key. Required for Reaparr to do anything — but no longer required at container *startup*; Reaparr now starts fine with nothing configured and simply reports "not configured" in the dashboard and skips sweeps until it is |
+| `JELLYFIN_API_KEY` | — | Jellyfin API key. Required for sweeps to run (see "Requirements"), but not at container startup |
 | `RADARR_URL` | `http://radarr:7878` | Radarr base URL |
 | `RADARR_API_KEY` | — | Radarr API key. At least one of `RADARR_API_KEY`/`SONARR_API_KEY` is needed; either alone is enough for a movies-only or TV-only setup |
 | `SONARR_URL` | `http://sonarr:8989` | Sonarr base URL |
@@ -136,8 +143,8 @@ container restart.
 | `DELETE_TV_SHOWS_AFTER` | `7d` | Same, for TV episodes — configured independently of `DELETE_MOVIES_AFTER`, e.g. a shorter grace period for movies (single-sitting watches) and a longer one for TV (a season pack might sit half-watched between episodes for a while) |
 | `POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
-| `SEERR_URL` | `http://seerr:5055` | Seerr base URL. Entirely optional — see "Seerr cleanup" below |
-| `SEERR_API_KEY` | — | Seerr API key. If unset, Reaparr never talks to Seerr at all |
+| `SEERR_URL` | `http://seerr:5055` | Seerr base URL — see "Seerr cleanup" above |
+| `SEERR_API_KEY` | — | Seerr API key. Required for sweeps to run |
 | `REAPARR_DATA_DIR` | `/app/data` | Where Reaparr persists dashboard-entered settings/connections (`config.json`) |
 
 Both grace-period variables accept Go duration strings (`45m`, `6h`, `168h`,
@@ -153,15 +160,25 @@ API keys are never logged in full, even at debug level, and are masked in
 the dashboard/API once saved (only the last 4 characters shown) — only a
 present/absent flag or masked value is ever exposed.
 
+**Prefer setting API keys via environment variables.** Values from env
+vars are only ever held in memory — they are never written to disk. A key
+entered in the dashboard, by contrast, is stored in plain text in
+`config.json` (file mode `0600`). You can mix the two freely, e.g. set
+`SEERR_URL` via env and enter only the Seerr API key in the dashboard.
+
 ## Dashboard
 
 Reaparr serves a small web dashboard on **port 8767** with three tabs:
 
-- **Due for deletion** — a live preview of everything currently matching
-  the watched-and-past-grace-period rule, using the exact same matching
-  code the scheduled sweep uses (not a separate, potentially-diverging
-  check). Each item can be deleted immediately via its own button, calling
-  the same Radarr/Sonarr delete path the cron sweep uses.
+- **Due for deletion** — a preview of everything currently matching the
+  watched-and-past-grace-period rule, using the exact same fetch and
+  matching code the scheduled sweep uses (not a separate,
+  potentially-diverging check). The preview is held in memory only and
+  rebuilt on startup, every 15 minutes, and after any dashboard save —
+  independently of the sweep, which always does its own fresh check before
+  deleting. Each item can be deleted immediately via its own button, which
+  re-verifies that item live first, then calls the same Radarr/Sonarr
+  delete path the cron sweep uses.
 - **Settings** — the grace periods, poll schedule, and log level, editable
   unless locked by an env var (see "Configuration" above).
 - **Connections** — Jellyfin/Radarr/Sonarr/Seerr URL + API key, each with a

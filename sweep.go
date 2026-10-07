@@ -88,11 +88,26 @@ func (s *sweeper) sweepOnce() {
 	s.deleteAllDue(due)
 }
 
-// deleteAllDue runs the delete pass over an already-computed due list —
-// split out from sweepOnce so a caller that needs the raw findDue result
-// for another purpose too (main.go's cron loop caches it for the
-// dashboard, see liveSweeper.updateCache) can compute it exactly once per
-// tick and hand the same slice to both, instead of scanning twice.
+// missingServices lists the required services that aren't configured
+// (both URL and API key set): Jellyfin, Radarr or Sonarr, and Seerr. A
+// non-empty result means the sweep must not run — see liveSweeper.sweep.
+func (s *sweeper) missingServices() []string {
+	var missing []string
+	if s.jellyfin.baseURL == "" || s.jellyfin.apiKey == "" {
+		missing = append(missing, "Jellyfin")
+	}
+	radarr := s.arr.radarrURL != "" && s.arr.radarrAPIKey != ""
+	sonarr := s.arr.sonarrURL != "" && s.arr.sonarrAPIKey != ""
+	if !radarr && !sonarr {
+		missing = append(missing, "Radarr or Sonarr")
+	}
+	if s.seerr.baseURL == "" || s.seerr.apiKey == "" {
+		missing = append(missing, "Seerr")
+	}
+	return missing
+}
+
+// deleteAllDue runs the delete pass over an already-computed due list.
 func (s *sweeper) deleteAllDue(due []dueItem) {
 	if len(due) == 0 {
 		s.log.Info().Msg("sweep finished: nothing due for deletion")

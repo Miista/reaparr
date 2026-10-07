@@ -31,6 +31,9 @@ type Sweeper interface {
 	// Delete deletes one specific due item, identified by the Jellyfin
 	// item ID previously returned in a DueItem.
 	Delete(jellyfinItemID string) error
+	// MissingServices lists the required services that aren't configured;
+	// while non-empty, the sweep refuses to run.
+	MissingServices() []string
 }
 
 // DueItem is a dashboard-facing rendering of one item due for deletion.
@@ -83,6 +86,7 @@ func New(st *store.Store, sw Sweeper, tester ConnectionTester, reload ReloadFunc
 // Routes registers all handlers on mux.
 func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/api/connections", s.handleConnections)
 	mux.HandleFunc("/api/connections/test", s.handleTestConnection)
@@ -92,6 +96,20 @@ func (s *Server) Routes(mux *http.ServeMux) {
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleStatus reports whether the sweep can run, i.e. which required
+// services (if any) are still unconfigured — drives the dashboard banner.
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	missing := s.sweeper.MissingServices()
+	if missing == nil {
+		missing = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"missing_services": missing})
 }
 
 // handleSettings handles GET (current resolved settings) and POST (patch

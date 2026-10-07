@@ -15,6 +15,11 @@
   </header>
 
   <main>
+    <div class="banner-warning" v-if="missingServices.length">
+      Reaparr is not running: configure {{ missingServices.join(', ') }}.
+      <a href="#" @click.prevent="tab = 'connections'">Go to Connections</a>
+    </div>
+
     <nav class="tabs">
       <button :class="{active: tab === 'due'}" @click="tab = 'due'">Due for deletion</button>
       <button :class="{active: tab === 'settings'}" @click="tab = 'settings'">Settings</button>

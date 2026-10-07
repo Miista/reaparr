@@ -128,6 +128,29 @@ func TestResolveConnections_EnvVarWins(t *testing.T) {
 	}
 }
 
+// A URL pinned by env must not lock the API key: it stays editable and its
+// persisted value (entered in the dashboard) is used.
+func TestResolveConnections_EnvURLOnly_APIKeyFromStore(t *testing.T) {
+	t.Setenv("SEERR_URL", "http://seerr.internal:5055")
+
+	got := ResolveConnections(store.Connections{
+		Seerr: store.Connection{URL: "http://seerr:5055", APIKey: "ui-key"},
+	})
+
+	if got.Connections.Seerr.URL != "http://seerr.internal:5055" {
+		t.Errorf("Seerr.URL = %q, want env-pinned value", got.Connections.Seerr.URL)
+	}
+	if got.Connections.Seerr.APIKey != "ui-key" {
+		t.Errorf("Seerr.APIKey = %q, want persisted value", got.Connections.Seerr.APIKey)
+	}
+	if !got.IsManaged("seerr.url") {
+		t.Error("seerr.url not reported as env-managed")
+	}
+	if got.IsManaged("seerr.api_key") {
+		t.Error("seerr.api_key reported as env-managed with only SEERR_URL set")
+	}
+}
+
 func TestMaskSecret(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"", ""},

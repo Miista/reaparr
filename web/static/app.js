@@ -18,8 +18,17 @@ function App() {
     testingService: null,
     testResults: {},
 
+    missingServices: [],
+
     async mounted() {
-      await Promise.all([this.loadDue(), this.loadSettings(), this.loadConnections()]);
+      await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections()]);
+    },
+
+    async loadStatus() {
+      const res = await fetch('/api/status');
+      if (!res.ok) return;
+      const data = await res.json();
+      this.missingServices = data.missing_services || [];
     },
 
     async loadDue() {
@@ -116,6 +125,7 @@ function App() {
         }
         this.connections = await res.json();
         this.connectionKeyInputs = { jellyfin: '', radarr: '', sonarr: '', seerr: '' };
+        await this.loadStatus();
         this.connectionsSaved = true;
         setTimeout(() => { this.connectionsSaved = false; }, 3000);
       } catch (err) {
