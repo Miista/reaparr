@@ -19,7 +19,7 @@ import (
 type Settings struct {
 	LogLevel          string `json:"log_level"`
 	PollSchedule      string `json:"poll_schedule"`
-	MoviesGracePeriod string `json:"movies_grace_period"` // e.g. "7d" — see duration.go's parseGracePeriod
+	MoviesGracePeriod string `json:"movies_grace_period"` // e.g. "7d" — see settings.ParseGracePeriod (min 1 day)
 	TVGracePeriod     string `json:"tv_grace_period"`
 	// DaemonEnabled controls the scheduled sweep. When false, nothing is
 	// deleted automatically — the dashboard still shows what's due, and

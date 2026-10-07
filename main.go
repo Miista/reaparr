@@ -157,6 +157,23 @@ func runCronLoop(ctx context.Context, live *liveSweeper, st *store.Store, logger
 	}
 }
 
+// gracePeriodOrFallback resolves a grace period setting. An unparseable
+// value falls back to 7 days; one below settings.MinGracePeriod (possible
+// only via env var — the dashboard and API reject it) is raised to the
+// minimum rather than ignored. Either way it's logged as an error.
+func gracePeriodOrFallback(name, raw string, logger zerolog.Logger) time.Duration {
+	d, err := settings.ParseGracePeriod(raw)
+	if err != nil {
+		logger.Error().Msg(fmt.Sprintf("invalid %s grace period %q, falling back to 7d: %v", name, raw, err))
+		return 7 * 24 * time.Hour
+	}
+	if d < settings.MinGracePeriod {
+		logger.Error().Msg(fmt.Sprintf("%s grace period %q is below the 1 day minimum, using 1d", name, raw))
+		return settings.MinGracePeriod
+	}
+	return d
+}
+
 // buildSweeper constructs a fresh *sweeper from the store's current
 // resolved settings/connections — called at startup and again after every
 // settings/connections save (see main's reload closure).
@@ -167,16 +184,8 @@ func buildSweeper(st *store.Store, httpClient *http.Client, logger zerolog.Logge
 	cfg := resolvedSettings.Settings
 	conns := resolvedConnections.Connections
 
-	moviesGrace, err := parseGracePeriod(cfg.MoviesGracePeriod)
-	if err != nil {
-		logger.Error().Msg(fmt.Sprintf("invalid movies grace period %q, falling back to 7d: %v", cfg.MoviesGracePeriod, err))
-		moviesGrace = 7 * 24 * time.Hour
-	}
-	tvGrace, err := parseGracePeriod(cfg.TVGracePeriod)
-	if err != nil {
-		logger.Error().Msg(fmt.Sprintf("invalid tv grace period %q, falling back to 7d: %v", cfg.TVGracePeriod, err))
-		tvGrace = 7 * 24 * time.Hour
-	}
+	moviesGrace := gracePeriodOrFallback("movies", cfg.MoviesGracePeriod, logger)
+	tvGrace := gracePeriodOrFallback("tv", cfg.TVGracePeriod, logger)
 	keepTag := strings.TrimSpace(cfg.KeepTag)
 	if keepTag == "" {
 		keepTag = store.DefaultSettings().KeepTag

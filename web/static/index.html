@@ -183,7 +183,7 @@
           </div>
         </div>
         <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
-          <div class="duration-box" v-for="d in durationFields" :key="d.key" :class="{ invalid: !settings.env_managed[d.key] && !parseDuration(settings.values[d.key]) }">
+          <div class="duration-box" v-for="d in durationFields" :key="d.key" :class="{ invalid: !settings.env_managed[d.key] && !graceValid(settings.values[d.key]) }">
             <span class="field-label">{{ d.label }}
               <span class="lock-label" v-if="settings.env_managed[d.key]"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ settings.env_managed[d.key] }}</span>
             </span>

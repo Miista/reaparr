@@ -9,6 +9,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -287,6 +288,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if err := s.validateSettingsPatch(incoming); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	if err := s.store.Update(func(st *store.State) {
 		applySettingsPatch(&st.Settings, incoming)
@@ -299,6 +304,26 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	var st store.State
 	s.store.View(func(state store.State) { st = state })
 	writeJSON(w, http.StatusOK, publicSettings(settings.Resolve(st.Settings)))
+}
+
+// validateSettingsPatch rejects grace periods that don't parse or are below
+// settings.MinGracePeriod, before anything is saved. Env-managed fields are
+// skipped — applySettingsPatch ignores them anyway.
+func (s *Server) validateSettingsPatch(incoming map[string]any) error {
+	var st store.State
+	s.store.View(func(state store.State) { st = state })
+	resolved := settings.Resolve(st.Settings)
+
+	for _, key := range []string{"movies_grace_period", "tv_grace_period"} {
+		v, ok := incoming[key].(string)
+		if !ok || resolved.IsManaged(key) {
+			continue
+		}
+		if _, err := settings.ValidateGracePeriod(strings.TrimSpace(v)); err != nil {
+			return fmt.Errorf("%s: %w", key, err)
+		}
+	}
+	return nil
 }
 
 // handleConnections handles GET (current resolved connections, secrets

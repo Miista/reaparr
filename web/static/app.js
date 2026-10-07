@@ -9,7 +9,10 @@ const SETTINGS_KEYS = ['movies_grace_period', 'tv_grace_period', 'poll_schedule'
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const pad = (n) => String(n).padStart(2, '0');
 
-// parseDuration mirrors duration.go's parseGracePeriod: "<n>d", "<n>w", or a
+// MIN_GRACE_SECONDS mirrors settings.MinGracePeriod (1 day).
+const MIN_GRACE_SECONDS = 86400;
+
+// parseDuration mirrors settings.ParseGracePeriod: "<n>d", "<n>w", or a
 // Go duration string (e.g. 36h, 1h30m). Returns seconds, or null if invalid.
 function parseDuration(raw) {
   const v = (raw || '').trim();
@@ -523,6 +526,12 @@ function App() {
 
     parseDuration,
 
+    // graceValid: parses, and is at least the 1 day minimum.
+    graceValid(raw) {
+      const secs = parseDuration((raw || '').trim());
+      return secs !== null && secs >= MIN_GRACE_SECONDS;
+    },
+
     durationHuman(raw) {
       const v = (raw || '').trim();
       const secs = parseDuration(v);
@@ -538,6 +547,7 @@ function App() {
         }
         return 'Use a number + h, d or w (e.g. 7d, 36h, 2w)';
       }
+      if (secs < MIN_GRACE_SECONDS) return 'Minimum is 1 day';
       const w = /^(\d+(?:\.\d+)?)w$/.exec(v);
       return '= ' + (w ? plural(+w[1], 'week') : humanSeconds(secs));
     },
@@ -566,8 +576,8 @@ function App() {
     get settingsValid() {
       const managed = this.settings.env_managed;
       const v = this.settings.values;
-      return (managed.movies_grace_period || parseDuration(v.movies_grace_period) !== null)
-        && (managed.tv_grace_period || parseDuration(v.tv_grace_period) !== null)
+      return (managed.movies_grace_period || this.graceValid(v.movies_grace_period))
+        && (managed.tv_grace_period || this.graceValid(v.tv_grace_period))
         && (managed.poll_schedule || this.cronHuman(v.poll_schedule) !== null)
         && (managed.keep_tag || !!(v.keep_tag || '').trim());
     },

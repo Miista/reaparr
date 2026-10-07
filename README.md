@@ -179,14 +179,18 @@ setting's key upper-cased, with `.` replaced by `_`.
 | `REAPARR_SETTING_KEEP_TAG` | `reaparr-keep` | Radarr/Sonarr tag marking keepers — see "Keepers" below |
 | `REAPARR_SETTING_DAEMON_ENABLED` | `true` | Whether the scheduled sweep deletes automatically. When `false`, nothing is deleted on schedule — the dashboard still lists what's ripe for deletion and you delete from there. An unparseable value counts as `false` |
 
-Both grace-period variables accept Go duration strings (`45m`, `6h`, `168h`,
-`1h30m`) plus `d` (days) and `w` (weeks) suffixes — e.g. `7d`, `2w`.
-Fractional day/week values are allowed (e.g. `1.5d`). Months are
+Both grace-period variables accept Go duration strings (`36h`, `168h`,
+`30h30m`) plus `d` (days) and `w` (weeks) suffixes — e.g. `7d`, `2w`.
+Fractional day/week values are allowed (e.g. `1.5d`), but days/weeks can't
+be combined with other units (`7d2h` — use `170h`). Months are
 deliberately unsupported since they aren't a fixed length.
 
 The grace period exists to protect against a premature or mistaken "played"
 flag (e.g. skipping credits) triggering deletion before anyone notices
-something's wrong.
+something's wrong, so it has a **minimum of 1 day**. The dashboard and API
+reject anything shorter; a shorter env var value is raised to 1 day (and
+logged as an error). It only governs the scheduled run — deleting by hand
+from the dashboard works right away.
 
 API keys are never logged in full, even at debug level, and are masked in
 the dashboard/API once saved (only the last 4 characters shown) — only a
