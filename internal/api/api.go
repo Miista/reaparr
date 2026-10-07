@@ -28,9 +28,9 @@ type Sweeper interface {
 	// plain data (no reference back to internal sweeper types) ready for
 	// JSON encoding.
 	FindDue() ([]DueItem, error)
-	// Delete deletes one specific due item, identified by the Jellyfin
-	// item ID previously returned in a DueItem.
-	Delete(jellyfinItemID string) error
+	// Delete deletes one specific due movie or season, identified by the ID
+	// previously returned in a DueItem.
+	Delete(id string) error
 	// MissingServices lists the required services that aren't configured;
 	// while non-empty, the sweep refuses to run.
 	MissingServices() []string
@@ -50,14 +50,16 @@ type DeleteAllResult struct {
 	Failed  int `json:"failed"`
 }
 
-// DueItem is a dashboard-facing rendering of one item due for deletion.
+// DueItem is a dashboard-facing rendering of one movie or season due for
+// deletion.
 type DueItem struct {
-	JellyfinItemID string `json:"jellyfin_item_id"`
-	Title          string `json:"title"`
-	Kind           string `json:"kind"` // "movie" or "series"
-	GracePeriod    string `json:"grace_period"`
-	StoppedAt      string `json:"stopped_at"` // RFC3339
-	Resolved       bool   `json:"resolved"`   // false => matched in Jellyfin but not found in Radarr/Sonarr
+	ID          string `json:"id"` // a movie's Jellyfin item ID, or "season:<seriesId>:<n>"
+	Title       string `json:"title"`
+	Kind        string `json:"kind"` // "movie" or "season"
+	GracePeriod string `json:"grace_period"`
+	StoppedAt   string `json:"stopped_at"` // RFC3339; for a season, its latest episode stop
+	Resolved    bool   `json:"resolved"`   // false => can't be deleted; Reason says why
+	Reason      string `json:"reason,omitempty"`
 }
 
 // ConnectionTester tests a single configured connection and reports whether
@@ -314,25 +316,25 @@ func (s *Server) handleDue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"due": due})
 }
 
-// handleDeleteDue deletes one specific due item, by Jellyfin item ID, via
-// the same delete call the cron sweep uses.
+// handleDeleteDue deletes one specific due movie or season, by the ID from
+// a DueItem, via the same delete call the cron sweep uses.
 func (s *Server) handleDeleteDue(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	var req struct {
-		JellyfinItemID string `json:"jellyfin_item_id"`
+		ID string `json:"id"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if req.JellyfinItemID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "jellyfin_item_id is required"})
+	if req.ID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
 		return
 	}
-	if err := s.sweeper.Delete(req.JellyfinItemID); err != nil {
+	if err := s.sweeper.Delete(req.ID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

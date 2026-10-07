@@ -111,46 +111,43 @@ func (l *liveSweeper) FindDue() ([]api.DueItem, error) {
 func renderDue(due []dueItem) []api.DueItem {
 	out := make([]api.DueItem, 0, len(due))
 	for _, d := range due {
-		kind := ""
-		if d.resolved {
-			kind = string(d.arrItem.kind)
-		}
 		out = append(out, api.DueItem{
-			JellyfinItemID: d.item.ID,
-			Title:          displayTitle(d.item),
-			Kind:           kind,
-			GracePeriod:    d.gracePeriod.String(),
-			StoppedAt:      d.stoppedAt.Format(time.RFC3339),
-			Resolved:       d.resolved,
+			ID:          d.id,
+			Title:       d.title,
+			Kind:        string(d.kind),
+			GracePeriod: d.gracePeriod.String(),
+			StoppedAt:   d.stoppedAt.Format(time.RFC3339),
+			Resolved:    d.resolved,
+			Reason:      d.reason,
 		})
 	}
 	return out
 }
 
-// Delete implements api.Sweeper, deleting one specific due item identified
-// by its Jellyfin item ID. Always re-verifies that single item live via
-// findOneDue first — never trusts the cached list FindDue serves — so a
-// manual delete acts on freshly-confirmed reality even if the dashboard's
-// displayed list is a sweep or two behind (see the liveSweeper doc
-// comment). If the item no longer qualifies (unplayed again, or back
-// within its grace period since the cache was built), that is reported as
-// "nothing to delete", not silently treated as success.
-func (l *liveSweeper) Delete(jellyfinItemID string) error {
+// Delete implements api.Sweeper, deleting one specific due movie or season
+// by its id. Always re-verifies it live via findOneDue first — never trusts
+// the cached list FindDue serves — so a manual delete acts on
+// freshly-confirmed reality even if the dashboard's displayed list is
+// behind (see the liveSweeper doc comment). If it no longer qualifies
+// (unplayed again, or back within its grace period since the cache was
+// built), that is reported as "nothing to delete", not silently treated as
+// success.
+func (l *liveSweeper) Delete(id string) error {
 	s := l.current()
-	d, ok, err := s.findOneDue(jellyfinItemID)
+	d, ok, err := s.findOneDue(id)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("item %s is no longer due for deletion (re-verified just now)", jellyfinItemID)
+		return fmt.Errorf("%s is no longer due for deletion (re-verified just now)", id)
 	}
 	if !d.resolved {
-		return fmt.Errorf("'%s' has no matching radarr/sonarr entry to delete", displayTitle(d.item))
+		return fmt.Errorf("'%s' can't be deleted: %s", d.title, d.reason)
 	}
 	if err := s.deleteDueItem(d); err != nil {
 		return err
 	}
-	l.dropFromPreview(jellyfinItemID)
+	l.dropFromPreview(id)
 	return nil
 }
 
@@ -183,12 +180,12 @@ func (l *liveSweeper) DaemonEnabled() bool {
 
 // dropFromPreview removes one just-deleted item from the cached preview so
 // the dashboard doesn't keep listing it until the next refresh.
-func (l *liveSweeper) dropFromPreview(jellyfinItemID string) {
+func (l *liveSweeper) dropFromPreview(id string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	kept := l.cachedDue[:0:0]
 	for _, d := range l.cachedDue {
-		if d.item.ID != jellyfinItemID {
+		if d.id != id {
 			kept = append(kept, d)
 		}
 	}

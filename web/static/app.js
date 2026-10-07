@@ -76,13 +76,13 @@ function App() {
     },
 
     async deleteItem(item) {
-      this.deletingID = item.jellyfin_item_id;
+      this.deletingID = item.id;
       this.dueError = '';
       try {
         const res = await fetch('/api/due/delete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jellyfin_item_id: item.jellyfin_item_id }),
+          body: JSON.stringify({ id: item.id }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));

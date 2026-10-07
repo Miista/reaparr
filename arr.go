@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -150,12 +152,91 @@ func (a *arrClient) deleteMovie(id string) error {
 	return a.doDelete("radarr", url, a.radarrAPIKey, id)
 }
 
-// deleteSeries unmonitors and deletes a Sonarr series' files, via
-// DELETE /api/v3/series/{id}?deleteFiles=true&addImportListExclusion=false.
-// id must be Sonarr's own internal numeric ID — see findSeriesByTvdbID.
-func (a *arrClient) deleteSeries(id string) error {
-	url := fmt.Sprintf("%s/api/v3/series/%s?deleteFiles=true&addImportListExclusion=false", a.sonarrURL, id)
-	return a.doDelete("sonarr", url, a.sonarrAPIKey, id)
+// sonarrEpisode is the subset of Sonarr's episode resource needed to decide
+// whether a whole season is watched and to delete/unmonitor it.
+type sonarrEpisode struct {
+	ID            int        `json:"id"`
+	SeasonNumber  int        `json:"seasonNumber"`
+	EpisodeNumber int        `json:"episodeNumber"`
+	HasFile       bool       `json:"hasFile"`
+	EpisodeFileID int        `json:"episodeFileId"`
+	AirDateUtc    *time.Time `json:"airDateUtc"`
+}
+
+// sonarrEpisodes returns every episode Sonarr tracks for a series, across
+// all seasons — aired or not, downloaded or not.
+func (a *arrClient) sonarrEpisodes(seriesID int) ([]sonarrEpisode, error) {
+	var episodes []sonarrEpisode
+	err := a.get(fmt.Sprintf("%s/api/v3/episode?seriesId=%d", a.sonarrURL, seriesID), a.sonarrAPIKey, &episodes)
+	return episodes, err
+}
+
+// unmonitorSeason stops Sonarr from re-downloading a season: it unmonitors
+// the season's episodes, then the season itself on the series resource.
+// The series is round-tripped as raw JSON so a PUT never drops fields this
+// client doesn't model.
+func (a *arrClient) unmonitorSeason(seriesID, seasonNumber int, episodeIDs []int) error {
+	body := map[string]any{"episodeIds": episodeIDs, "monitored": false}
+	if err := a.send(http.MethodPut, a.sonarrURL+"/api/v3/episode/monitor", body); err != nil {
+		return fmt.Errorf("unmonitoring episodes: %w", err)
+	}
+
+	seriesURL := fmt.Sprintf("%s/api/v3/series/%d", a.sonarrURL, seriesID)
+	var series map[string]any
+	if err := a.get(seriesURL, a.sonarrAPIKey, &series); err != nil {
+		return fmt.Errorf("reading series: %w", err)
+	}
+	seasons, _ := series["seasons"].([]any)
+	for _, s := range seasons {
+		season, ok := s.(map[string]any)
+		if ok && season["seasonNumber"] == float64(seasonNumber) {
+			season["monitored"] = false
+		}
+	}
+	if err := a.send(http.MethodPut, seriesURL, series); err != nil {
+		return fmt.Errorf("unmonitoring season: %w", err)
+	}
+	return nil
+}
+
+// deleteEpisodeFiles deletes the given Sonarr episode files (and the files
+// on disk) via DELETE /api/v3/episodefile/bulk. The series and its other
+// seasons are untouched.
+func (a *arrClient) deleteEpisodeFiles(episodeFileIDs []int) error {
+	a.log.Info().Msg(fmt.Sprintf("calling sonarr to delete %d episode file(s)", len(episodeFileIDs)))
+	body := map[string]any{"episodeFileIds": episodeFileIDs}
+	if err := a.send(http.MethodDelete, a.sonarrURL+"/api/v3/episodefile/bulk", body); err != nil {
+		a.log.Error().Msg(fmt.Sprintf("sonarr refused to delete episode files %v — nothing was deleted: %v", episodeFileIDs, err))
+		return err
+	}
+	a.log.Info().Msg("sonarr confirmed the delete of the episode files — the downloads/qBittorrent copy is untouched")
+	return nil
+}
+
+// send issues a Sonarr request with a JSON body, treating any non-2xx
+// status as an error.
+func (a *arrClient) send(method, url string, body any) error {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(method, url, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Api-Key", a.sonarrAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("%s %s failed: %s", method, url, resp.Status)
+	}
+	return nil
 }
 
 func (a *arrClient) doDelete(service, url, apiKey, id string) error {

@@ -315,55 +315,6 @@ func TestSweepOnce_UsesLatestStopEvent_WhenMultipleExist(t *testing.T) {
 	}
 }
 
-func TestSweepOnce_RoutesEpisodeToSonarr_ViaSeriesTvdbID(t *testing.T) {
-	now := time.Now().UTC()
-
-	jellyfin := newFakeJellyfin(t, fakeJellyfinConfig{
-		users: []jellyfinUser{{ID: "u1", Name: "admin"}},
-		itemsByUser: map[string][]jellyfinItem{
-			"u1": {{
-				ID: "jf-episode-1", Name: "S01E01", Type: "Episode",
-				SeriesID: "jf-series-1", SeriesName: "Some Show",
-				ProviderIds: jellyfinProviders{Tvdb: "episode-level-id-not-used"},
-				UserData:    jellyfinUserData{Played: true},
-			}},
-		},
-		activityEntries: []jellyfinActivityEntry{
-			{Type: "VideoPlaybackStopped", ItemID: "jf-episode-1", Date: now.Add(-48 * time.Hour)},
-		},
-		seriesByID: map[string]jellyfinItem{
-			"jf-series-1": {ID: "jf-series-1", Type: "Series", ProviderIds: jellyfinProviders{Tvdb: "410092"}},
-		},
-	})
-
-	var gotPath string
-	radarrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
-		// Only the hardlink-safety check (a GET to config/mediamanagement,
-		// handled by withHardlinksEnabled) should ever reach radarr here —
-		// anything else means radarr was wrongly consulted for an episode.
-		t.Fatalf("radarr should not be called for anything beyond the hardlink check when handling an episode, got %s %s", r.Method, r.URL.Path)
-	}))
-	defer radarrSrv.Close()
-	sonarrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/series" {
-			json.NewEncoder(w).Encode([]sonarrSeries{{ID: 7, Title: "Some Show", TvdbID: 410092}})
-			return
-		}
-		gotPath = r.URL.Path
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer sonarrSrv.Close()
-
-	arr := &arrClient{radarrURL: radarrSrv.URL, radarrAPIKey: "k", sonarrURL: sonarrSrv.URL, sonarrAPIKey: "k", httpClient: sonarrSrv.Client(), log: testLogger(t)}
-	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 24 * time.Hour, tvGracePeriod: 24 * time.Hour, log: testLogger(t)}
-
-	sw.sweepOnce()
-
-	if gotPath != "/api/v3/series/7" {
-		t.Fatalf("sonarr path = %q, want /api/v3/series/7", gotPath)
-	}
-}
-
 func TestSweepOnce_MovieNotInRadarr_IsSkippedNotRetried(t *testing.T) {
 	now := time.Now().UTC()
 
@@ -499,23 +450,20 @@ func TestSweepOnce_RadarrUnsafe_DoesNotBlockSonarr(t *testing.T) {
 		itemsByUser: map[string][]jellyfinItem{
 			"u1": {
 				{ID: "jf-movie-1", Name: "Old Movie", Type: "Movie", ProviderIds: jellyfinProviders{Tmdb: "999"}, UserData: jellyfinUserData{Played: true}},
-				{
-					ID: "jf-episode-1", Name: "S01E01", Type: "Episode",
-					SeriesID: "jf-series-1", SeriesName: "Some Show",
-					UserData: jellyfinUserData{Played: true},
-				},
+				playedEpisode("e1", 1, 1),
+				playedEpisode("e2", 1, 2),
 			},
 		},
 		activityEntries: []jellyfinActivityEntry{
 			{Type: "VideoPlaybackStopped", ItemID: "jf-movie-1", Date: now.Add(-48 * time.Hour)},
-			{Type: "VideoPlaybackStopped", ItemID: "jf-episode-1", Date: now.Add(-48 * time.Hour)},
+			{Type: "VideoPlaybackStopped", ItemID: "e2", Date: now.Add(-48 * time.Hour)},
 		},
 		seriesByID: map[string]jellyfinItem{
 			"jf-series-1": {ID: "jf-series-1", Type: "Series", ProviderIds: jellyfinProviders{Tvdb: "410092"}},
 		},
 	})
 
-	var movieDeletes, seriesDeletes int32
+	var movieDeletes int32
 	radarrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/config/mediamanagement" {
 			json.NewEncoder(w).Encode(mediaManagementConfig{CopyUsingHardlinks: false}) // radarr: unsafe
@@ -528,17 +476,7 @@ func TestSweepOnce_RadarrUnsafe_DoesNotBlockSonarr(t *testing.T) {
 	}))
 	defer radarrSrv.Close()
 
-	sonarrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) { // sonarr: safe
-		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/series" {
-			json.NewEncoder(w).Encode([]sonarrSeries{{ID: 7, Title: "Some Show", TvdbID: 410092}})
-			return
-		}
-		if r.Method == http.MethodDelete {
-			atomic.AddInt32(&seriesDeletes, 1)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer sonarrSrv.Close()
+	sonarr, sonarrSrv := newFakeSonarr(t, season1()) // sonarr: safe
 
 	arr := &arrClient{radarrURL: radarrSrv.URL, radarrAPIKey: "k", sonarrURL: sonarrSrv.URL, sonarrAPIKey: "k", httpClient: radarrSrv.Client(), log: testLogger(t)}
 	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 24 * time.Hour, tvGracePeriod: 24 * time.Hour, log: testLogger(t)}
@@ -548,8 +486,8 @@ func TestSweepOnce_RadarrUnsafe_DoesNotBlockSonarr(t *testing.T) {
 	if got := atomic.LoadInt32(&movieDeletes); got != 0 {
 		t.Fatalf("expected 0 movie deletes since radarr is unsafe, got %d", got)
 	}
-	if got := atomic.LoadInt32(&seriesDeletes); got != 1 {
-		t.Fatalf("expected 1 series delete since sonarr is safe, got %d", got)
+	if got := sonarr.deletedFileIDs; len(got) != 2 {
+		t.Fatalf("expected the season's 2 episode files deleted since sonarr is safe, got %v", got)
 	}
 }
 
@@ -667,43 +605,28 @@ func TestSweepOnce_UsesLongerTVGracePeriod(t *testing.T) {
 	jellyfin := newFakeJellyfin(t, fakeJellyfinConfig{
 		users: []jellyfinUser{{ID: "u1", Name: "admin"}},
 		itemsByUser: map[string][]jellyfinItem{
-			"u1": {{
-				ID: "jf-episode-1", Name: "S01E01", Type: "Episode",
-				SeriesID: "jf-series-1", SeriesName: "Some Show",
-				UserData: jellyfinUserData{Played: true},
-			}},
+			"u1": {playedEpisode("e1", 1, 1), playedEpisode("e2", 1, 2)},
 		},
 		activityEntries: []jellyfinActivityEntry{
 			// stopped 3 days ago: past a 2-day movies grace period, but
-			// NOT past a 7-day TV grace period. If episodes were wrongly
+			// NOT past a 7-day TV grace period. If seasons were wrongly
 			// judged against moviesGracePeriod, this would be deleted.
-			{Type: "VideoPlaybackStopped", ItemID: "jf-episode-1", Date: now.Add(-3 * 24 * time.Hour)},
+			{Type: "VideoPlaybackStopped", ItemID: "e2", Date: now.Add(-3 * 24 * time.Hour)},
 		},
 		seriesByID: map[string]jellyfinItem{
 			"jf-series-1": {ID: "jf-series-1", Type: "Series", ProviderIds: jellyfinProviders{Tvdb: "410092"}},
 		},
 	})
 
-	var deleteCalls int32
-	sonarrSrv := httptest.NewServer(withHardlinksEnabled(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/v3/series" {
-			json.NewEncoder(w).Encode([]sonarrSeries{{ID: 7, Title: "Some Show", TvdbID: 410092}})
-			return
-		}
-		if r.Method == http.MethodDelete {
-			atomic.AddInt32(&deleteCalls, 1)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer sonarrSrv.Close()
+	sonarr, sonarrSrv := newFakeSonarr(t, season1())
 
 	arr := &arrClient{radarrURL: sonarrSrv.URL, radarrAPIKey: "k", sonarrURL: sonarrSrv.URL, sonarrAPIKey: "k", httpClient: sonarrSrv.Client(), log: testLogger(t)}
 	sw := &sweeper{jellyfin: jellyfin, arr: arr, moviesGracePeriod: 2 * 24 * time.Hour, tvGracePeriod: 7 * 24 * time.Hour, log: testLogger(t)}
 
 	sw.sweepOnce()
 
-	if got := atomic.LoadInt32(&deleteCalls); got != 0 {
-		t.Fatalf("expected 0 deletes: episode is within the 7-day TV grace period even though it's past the 2-day movies grace period, got %d", got)
+	if got := sonarr.deletedFileIDs; len(got) != 0 {
+		t.Fatalf("expected 0 deletes: season is within the 7-day TV grace period even though it's past the 2-day movies grace period, got %v", got)
 	}
 }
 

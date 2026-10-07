@@ -14,7 +14,7 @@ type mediaKind string
 
 const (
 	kindMovie  mediaKind = "movie"
-	kindSeries mediaKind = "series"
+	kindSeason mediaKind = "season" // one season of a series — see seasons.go
 )
 
 // sweeper runs on a cron schedule. Reaparr is entirely stateless: every
@@ -25,8 +25,9 @@ const (
 //  1. Ask Jellyfin's Activity Log for every item with a VideoPlaybackStopped
 //     event older than the grace period (set A).
 //  2. Ask Jellyfin for every item every user currently has Played=true (set B).
-//  3. For each item in A ∩ B, resolve it to Radarr/Sonarr's own ID (via
-//     TMDB/TVDB) and delete it.
+//  3. For each movie in A ∩ B, resolve it to Radarr's own ID (via TMDB) and
+//     delete it. Episodes are grouped into seasons and a season is only
+//     deleted once it is entirely watched — see seasons.go.
 //
 // The intersection is what makes this safe: A alone doesn't mean
 // "finished" (VideoPlaybackStopped fires on any stop, including someone
@@ -122,7 +123,7 @@ func (s *sweeper) deleteAllDue(due []dueItem) (cleaned, skipped, failed int) {
 
 	for _, d := range due {
 		if !d.resolved {
-			s.log.Warn().Msg(fmt.Sprintf("'%s' is watched and past its grace period, but radarr/sonarr doesn't know about it — nothing to delete, skipping", displayTitle(d.item)))
+			s.log.Warn().Msg(fmt.Sprintf("'%s' is watched and past its grace period, but can't be deleted (%s) — skipping", d.title, d.reason))
 			skipped++
 			continue
 		}
@@ -140,18 +141,21 @@ func (s *sweeper) deleteAllDue(due []dueItem) (cleaned, skipped, failed int) {
 	return cleaned, skipped, failed
 }
 
-// dueItem is one Jellyfin item that is both currently played and past its
-// grace period, together with whatever Radarr/Sonarr resolution was
-// possible for it. resolved=false means Jellyfin knows about this item but
-// it could not be matched into Radarr/Sonarr (not configured,
-// hardlink-unsafe, or simply untracked there) — a real, expected case, not
-// an error; see resolveToArr's doc comment.
+// dueItem is one movie or one season that is watched and past its grace
+// period, together with whatever Radarr/Sonarr resolution was possible for
+// it. resolved=false means it could not be matched into Radarr/Sonarr
+// (hardlink-unsafe, a failed lookup, or simply untracked there) — reason
+// says which, for the log and the dashboard.
 type dueItem struct {
-	item        jellyfinItem
+	id          string // Jellyfin item ID for a movie; seasonItemID for a season
+	title       string
+	kind        mediaKind
 	gracePeriod time.Duration
 	stoppedAt   time.Time
 	resolved    bool
-	arrItem     resolvedArrItem
+	reason      string        // set when resolved=false
+	movie       radarrMovie   // kind=movie, resolved
+	season      *seasonTarget // kind=season, resolved
 }
 
 // findDue performs the full "what's due for deletion" computation — the
@@ -183,8 +187,18 @@ func (s *sweeper) findDue() ([]dueItem, error) {
 
 	var due []dueItem
 	for _, item := range playedItems {
+		if item.Type != "Movie" {
+			continue
+		}
 		stoppedAt, stopped := latestStop[item.ID]
-		if d, ok := s.evaluateItem(item, stoppedAt, stopped, now, safety); ok {
+		if d, ok := s.evaluateMovie(item, stoppedAt, stopped, now, safety); ok {
+			due = append(due, d)
+		}
+	}
+
+	lookups := newSonarrLookups(s)
+	for _, g := range s.groupPlayedEpisodes(playedItems, latestStop) {
+		if d, ok := s.evaluateSeason(g, now, safety, lookups); ok {
 			due = append(due, d)
 		}
 	}
@@ -192,99 +206,86 @@ func (s *sweeper) findDue() ([]dueItem, error) {
 	return due, nil
 }
 
-// findOneDue re-verifies, right now, whether a single specific Jellyfin
-// item is currently due for deletion — used by a manual delete request so
-// it acts on freshly-confirmed reality rather than a possibly-stale cached
-// list the dashboard is displaying (see liveSweeper.cachedDue in
-// adapter.go). Calls the exact same evaluateItem helper findDue uses, just
-// scoped to one item instead of every currently-played one, so there is
-// still only one matching algorithm, not a second one for this path.
+// findOneDue re-verifies, right now, whether a single movie or season is
+// currently due for deletion — used by a manual delete request so it acts
+// on freshly-confirmed reality rather than a possibly-stale cached list the
+// dashboard is displaying (see liveSweeper.cachedDue in adapter.go). It
+// runs the full findDue and picks the requested row, so there is only one
+// matching algorithm — a season's eligibility depends on all its episodes,
+// so it can't be re-checked in isolation anyway.
 //
-// ok=false means the item is not currently due — either it was never
-// played, got unplayed since the cached list was built, or is still within
-// its grace period. That is reported to the caller as "nothing to delete",
-// not as an error: a cache that's gone stale in the user's favor (the item
-// no longer qualifies) is the whole point of re-verifying, not a bug.
-func (s *sweeper) findOneDue(jellyfinItemID string) (dueItem, bool, error) {
-	safety := s.checkHardlinkSafety()
-
-	latestStop, err := s.jellyfin.latestStopEvents()
+// ok=false means the item is not currently due — it got unplayed since the
+// cached list was built, or is still within its grace period. That is
+// reported to the caller as "nothing to delete", not as an error: a cache
+// that's gone stale in the user's favor is the whole point of re-verifying.
+func (s *sweeper) findOneDue(id string) (dueItem, bool, error) {
+	due, err := s.findDue()
 	if err != nil {
-		s.log.Error().Msg(fmt.Sprintf("could not read jellyfin's activity log for a manual delete re-check, aborting: %v", err))
 		return dueItem{}, false, err
 	}
-
-	playedItems, err := s.currentlyPlayedItems()
-	if err != nil {
-		s.log.Error().Msg(fmt.Sprintf("could not check jellyfin's current watched state for a manual delete re-check, aborting: %v", err))
-		return dueItem{}, false, err
-	}
-
-	now := time.Now().UTC()
-	for _, item := range playedItems {
-		if item.ID != jellyfinItemID {
-			continue
+	for _, d := range due {
+		if d.id == id {
+			return d, true, nil
 		}
-		stoppedAt, stopped := latestStop[item.ID]
-		d, ok := s.evaluateItem(item, stoppedAt, stopped, now, safety)
-		return d, ok, nil
 	}
-
 	return dueItem{}, false, nil
 }
 
-// evaluateItem is the per-item core of findDue's matching algorithm,
-// extracted so findOneDue can re-run it for a single item without
-// duplicating the logic by hand. ok=false means this item doesn't belong
-// in the due set right now (never played, no stop event yet, or still
-// within its grace period) — logged at debug level since it's the common,
-// expected case for most of the library, not a problem.
-func (s *sweeper) evaluateItem(item jellyfinItem, stoppedAt time.Time, stopped bool, now time.Time, safety hardlinkSafety) (dueItem, bool) {
+// evaluateMovie is the per-movie core of findDue's matching algorithm.
+// ok=false means this movie doesn't belong in the due set right now (no
+// stop event yet, or still within its grace period) — logged at debug
+// level since it's the common, expected case for most of the library.
+func (s *sweeper) evaluateMovie(item jellyfinItem, stoppedAt time.Time, stopped bool, now time.Time, safety hardlinkSafety) (dueItem, bool) {
 	if !stopped {
-		s.log.Debug().Msg(fmt.Sprintf("'%s' is played but has no stop event in jellyfin's activity log, skipping", displayTitle(item)))
+		s.log.Debug().Msg(fmt.Sprintf("'%s' is played but has no stop event in jellyfin's activity log, skipping", item.Name))
 		return dueItem{}, false
 	}
 
 	gracePeriod := s.gracePeriodFor(item)
 	if !stoppedAt.Before(now.Add(-gracePeriod)) {
-		s.log.Debug().Msg(fmt.Sprintf("'%s' stopped playing %s, still within its %s grace period", displayTitle(item), stoppedAt.Local().Format("2006-01-02 15:04"), gracePeriod))
+		s.log.Debug().Msg(fmt.Sprintf("'%s' stopped playing %s, still within its %s grace period", item.Name, stoppedAt.Local().Format("2006-01-02 15:04"), gracePeriod))
 		return dueItem{}, false
 	}
 
-	s.log.Info().Msg(fmt.Sprintf("'%s' is watched and past its %s grace period (stopped playing %s)", displayTitle(item), gracePeriod, stoppedAt.Local().Format("2006-01-02 15:04")))
-
-	d := dueItem{item: item, gracePeriod: gracePeriod, stoppedAt: stoppedAt}
-	resolved, ok, resolveErr := s.resolveToArr(item, safety)
-	if resolveErr != nil {
-		s.log.Error().Msg(fmt.Sprintf("could not look up '%s' in radarr/sonarr, will retry next sweep: %v", displayTitle(item), resolveErr))
-		// Still reported as due (so the UI preview can show it), just
-		// unresolved — a manual delete attempt will surface the same
-		// error.
-	} else if ok {
-		d.resolved = true
-		d.arrItem = resolved
+	if !s.arr.hasRadarr() {
+		s.log.Debug().Msg(fmt.Sprintf("radarr isn't configured, ignoring watched movie '%s'", item.Name))
+		return dueItem{}, false
 	}
+
+	s.log.Info().Msg(fmt.Sprintf("'%s' is watched and past its %s grace period (stopped playing %s)", item.Name, gracePeriod, stoppedAt.Local().Format("2006-01-02 15:04")))
+
+	d := dueItem{id: item.ID, title: item.Name, kind: kindMovie, gracePeriod: gracePeriod, stoppedAt: stoppedAt}
+	movie, reason := s.resolveMovie(item, safety)
+	if reason != "" {
+		s.log.Warn().Msg(fmt.Sprintf("'%s' can't be matched to radarr: %s", item.Name, reason))
+		d.reason = reason
+		return d, true
+	}
+	d.resolved = true
+	d.movie = movie
 	return d, true
 }
 
-// deleteDueItem deletes one item previously returned by findDue, via the
-// same arrClient.deleteMovie/deleteSeries calls the cron sweep has always
-// used. This is also what the HTTP API's manual single-item delete action
-// calls, so there is only ever one delete code path.
+// deleteDueItem deletes one item previously returned by findDue: a movie
+// via Radarr, a season via Sonarr (see deleteSeason). This is also what the
+// HTTP API's manual delete actions call, so there is only ever one delete
+// code path.
 func (s *sweeper) deleteDueItem(d dueItem) error {
 	var deleteErr error
-	switch d.arrItem.kind {
+	switch d.kind {
 	case kindMovie:
-		deleteErr = s.arr.deleteMovie(d.arrItem.id)
-	case kindSeries:
-		deleteErr = s.arr.deleteSeries(d.arrItem.id)
+		deleteErr = s.arr.deleteMovie(fmt.Sprint(d.movie.ID))
+	case kindSeason:
+		deleteErr = s.deleteSeason(d.season)
+	default:
+		deleteErr = fmt.Errorf("unknown kind %q", d.kind)
 	}
 	if deleteErr != nil {
-		s.log.Error().Msg(fmt.Sprintf("failed to delete '%s' (%s id %s), will retry next sweep: %v", d.arrItem.title, d.arrItem.kind, d.arrItem.id, deleteErr))
+		s.log.Error().Msg(fmt.Sprintf("failed to delete '%s', will retry next sweep: %v", d.title, deleteErr))
 		return deleteErr
 	}
 
-	s.log.Info().Msg(fmt.Sprintf("deleted '%s' (%s id %s)", d.arrItem.title, d.arrItem.kind, d.arrItem.id))
+	s.log.Info().Msg(fmt.Sprintf("deleted '%s'", d.title))
 	return nil
 }
 
@@ -414,74 +415,25 @@ func (s *sweeper) checkHardlinkSafety() hardlinkSafety {
 	return safety
 }
 
-// resolvedArrItem is a played Jellyfin item successfully matched to its
-// Radarr/Sonarr counterpart, ready to delete.
-type resolvedArrItem struct {
-	kind  mediaKind
-	id    string
-	title string
-}
-
-// resolveToArr maps a played Jellyfin item to Radarr/Sonarr's own internal
-// ID, via TMDB (movies) or TVDB (series, via a series-level lookup for
-// episodes — see jellyfinClient.seriesTvdbID). Jellyfin's own item ID means
-// nothing to Radarr/Sonarr's delete APIs, so this lookup is required, not
-// optional. ok=false (with no error) means Jellyfin knows about this item
-// but Radarr/Sonarr doesn't (or isn't safe to act on this sweep) — a real,
-// expected case, not a bug.
-func (s *sweeper) resolveToArr(item jellyfinItem, safety hardlinkSafety) (resolvedArrItem, bool, error) {
-	switch item.Type {
-	case "Movie":
-		if !s.arr.hasRadarr() {
-			s.log.Debug().Msg(fmt.Sprintf("radarr isn't configured, ignoring watched movie '%s'", item.Name))
-			return resolvedArrItem{}, false, nil
-		}
-		if !safety.radarrSafe {
-			s.log.Debug().Msg(fmt.Sprintf("skipping '%s': radarr's hardlink setting isn't safe this sweep", item.Name))
-			return resolvedArrItem{}, false, nil
-		}
-		if item.ProviderIds.Tmdb == "" {
-			s.log.Warn().Msg(fmt.Sprintf("jellyfin has no TMDB id for watched movie '%s', cannot match it to radarr", item.Name))
-			return resolvedArrItem{}, false, nil
-		}
-		movie, ok, err := s.arr.findMovieByTmdbID(item.ProviderIds.Tmdb)
-		if err != nil {
-			return resolvedArrItem{}, false, err
-		}
-		if !ok {
-			return resolvedArrItem{}, false, nil
-		}
-		return resolvedArrItem{kind: kindMovie, id: fmt.Sprint(movie.ID), title: movie.Title}, true, nil
-
-	case "Episode":
-		if !s.arr.hasSonarr() {
-			s.log.Debug().Msg(fmt.Sprintf("sonarr isn't configured, ignoring watched episode '%s' of '%s'", item.Name, item.SeriesName))
-			return resolvedArrItem{}, false, nil
-		}
-		if !safety.sonarrSafe {
-			s.log.Debug().Msg(fmt.Sprintf("skipping '%s': sonarr's hardlink setting isn't safe this sweep", item.SeriesName))
-			return resolvedArrItem{}, false, nil
-		}
-		tvdbID, err := s.jellyfin.seriesTvdbID(item.SeriesID)
-		if err != nil {
-			return resolvedArrItem{}, false, err
-		}
-		if tvdbID == "" {
-			s.log.Warn().Msg(fmt.Sprintf("jellyfin has no TVDB id for '%s' (series of watched episode '%s'), cannot match it to sonarr", item.SeriesName, item.Name))
-			return resolvedArrItem{}, false, nil
-		}
-		series, ok, err := s.arr.findSeriesByTvdbID(tvdbID)
-		if err != nil {
-			return resolvedArrItem{}, false, err
-		}
-		if !ok {
-			return resolvedArrItem{}, false, nil
-		}
-		return resolvedArrItem{kind: kindSeries, id: fmt.Sprint(series.ID), title: series.Title}, true, nil
-
-	default:
-		return resolvedArrItem{}, false, nil
+// resolveMovie maps a played Jellyfin movie to Radarr's own internal ID via
+// its TMDB ID — Jellyfin's item ID means nothing to Radarr's delete API.
+// A non-empty reason means it can't be acted on (hardlink-unsafe, a failed
+// lookup, or untracked in Radarr) — a real, expected case, not a bug.
+func (s *sweeper) resolveMovie(item jellyfinItem, safety hardlinkSafety) (radarrMovie, string) {
+	if !safety.radarrSafe {
+		return radarrMovie{}, "Radarr's hardlink setting isn't confirmed safe"
 	}
+	if item.ProviderIds.Tmdb == "" {
+		return radarrMovie{}, "Jellyfin has no TMDB id for this movie"
+	}
+	movie, ok, err := s.arr.findMovieByTmdbID(item.ProviderIds.Tmdb)
+	if err != nil {
+		return radarrMovie{}, fmt.Sprintf("Radarr lookup failed: %v", err)
+	}
+	if !ok {
+		return radarrMovie{}, "Not found in Radarr"
+	}
+	return movie, ""
 }
 
 func displayTitle(item jellyfinItem) string {

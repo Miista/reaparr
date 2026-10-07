@@ -28,13 +28,19 @@ type jellyfinUser struct {
 }
 
 type jellyfinItem struct {
-	ID          string            `json:"Id"`
-	Name        string            `json:"Name"`
-	Type        string            `json:"Type"` // "Movie" or "Episode"
-	SeriesID    string            `json:"SeriesId"`
-	SeriesName  string            `json:"SeriesName"`
-	ProviderIds jellyfinProviders `json:"ProviderIds"`
-	UserData    jellyfinUserData  `json:"UserData"`
+	ID         string `json:"Id"`
+	Name       string `json:"Name"`
+	Type       string `json:"Type"` // "Movie" or "Episode"
+	SeriesID   string `json:"SeriesId"`
+	SeriesName string `json:"SeriesName"`
+	// For episodes: season number, episode number, and (for a multi-episode
+	// file) the last episode number it covers. Used to match Jellyfin's
+	// played episodes against Sonarr's episode list for a season.
+	ParentIndexNumber *int              `json:"ParentIndexNumber"`
+	IndexNumber       *int              `json:"IndexNumber"`
+	IndexNumberEnd    *int              `json:"IndexNumberEnd"`
+	ProviderIds       jellyfinProviders `json:"ProviderIds"`
+	UserData          jellyfinUserData  `json:"UserData"`
 }
 
 // jellyfinProviders are the external-database IDs Jellyfin tracks for an

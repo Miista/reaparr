@@ -56,33 +56,71 @@ func TestDeleteMovie_RequestShape(t *testing.T) {
 	}
 }
 
-func TestDeleteSeries_RequestShape(t *testing.T) {
+// TV deletion must only ever remove episode files — never the series.
+func TestDeleteEpisodeFiles_RequestShape(t *testing.T) {
 	var gotMethod, gotPath, gotAPIKey string
-	var gotQuery url.Values
+	var gotBody map[string][]int
 
 	client, _ := newTestArrClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
-		gotQuery = r.URL.Query()
 		gotAPIKey = r.Header.Get("X-Api-Key")
+		json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusOK)
 	})
 
-	if err := client.deleteSeries("7"); err != nil {
-		t.Fatalf("deleteSeries: %v", err)
+	if err := client.deleteEpisodeFiles([]int{11, 12}); err != nil {
+		t.Fatalf("deleteEpisodeFiles: %v", err)
 	}
 
-	if gotMethod != http.MethodDelete {
-		t.Errorf("method = %q, want DELETE", gotMethod)
+	if gotMethod != http.MethodDelete || gotPath != "/api/v3/episodefile/bulk" {
+		t.Errorf("request = %s %s, want DELETE /api/v3/episodefile/bulk", gotMethod, gotPath)
 	}
-	if gotPath != "/api/v3/series/7" {
-		t.Errorf("path = %q, want /api/v3/series/7", gotPath)
-	}
-	if gotQuery.Get("deleteFiles") != "true" {
-		t.Errorf("deleteFiles = %q, want true", gotQuery.Get("deleteFiles"))
+	if ids := gotBody["episodeFileIds"]; len(ids) != 2 || ids[0] != 11 || ids[1] != 12 {
+		t.Errorf("episodeFileIds = %v, want [11 12]", ids)
 	}
 	if gotAPIKey != "sonarr-key" {
 		t.Errorf("api key = %q, want sonarr-key", gotAPIKey)
+	}
+}
+
+// Unmonitoring must flip only the target season, and must PUT back every
+// other series field untouched.
+func TestUnmonitorSeason_RequestShape(t *testing.T) {
+	var monitorBody map[string]any
+	var putSeries map[string]any
+
+	client, _ := newTestArrClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v3/episode/monitor":
+			json.NewDecoder(r.Body).Decode(&monitorBody)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series/7":
+			w.Write([]byte(`{"id":7,"title":"Some Show","qualityProfileId":3,"seasons":[{"seasonNumber":1,"monitored":true},{"seasonNumber":2,"monitored":true}]}`))
+			return
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v3/series/7":
+			json.NewDecoder(r.Body).Decode(&putSeries)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	if err := client.unmonitorSeason(7, 1, []int{101, 102}); err != nil {
+		t.Fatalf("unmonitorSeason: %v", err)
+	}
+
+	if monitorBody["monitored"] != false || len(monitorBody["episodeIds"].([]any)) != 2 {
+		t.Errorf("episode/monitor body = %v, want 2 episodeIds unmonitored", monitorBody)
+	}
+	if putSeries["qualityProfileId"] != float64(3) {
+		t.Errorf("series PUT dropped qualityProfileId: %v", putSeries)
+	}
+	seasons := putSeries["seasons"].([]any)
+	if s1 := seasons[0].(map[string]any); s1["monitored"] != false {
+		t.Errorf("season 1 monitored = %v, want false", s1["monitored"])
+	}
+	if s2 := seasons[1].(map[string]any); s2["monitored"] != true {
+		t.Errorf("season 2 monitored = %v, want true (untouched)", s2["monitored"])
 	}
 }
 

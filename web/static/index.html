@@ -48,19 +48,19 @@
             <tr><th>Title</th><th>Kind</th><th>Stopped playing</th><th>Grace period</th><th>Status</th><th></th></tr>
           </thead>
           <tbody>
-            <tr v-for="item in due" :key="item.jellyfin_item_id">
+            <tr v-for="item in due" :key="item.id">
               <td>{{ item.title }}</td>
-              <td class="mono dim">{{ item.resolved ? item.kind : '—' }}</td>
+              <td class="mono dim">{{ item.kind }}</td>
               <td class="mono dim">{{ formatTime(item.stopped_at) }}</td>
               <td class="mono dim">{{ item.grace_period }}</td>
               <td>
                 <span v-if="item.resolved">Ready to delete</span>
-                <span class="dim" v-else>Not found in Radarr/Sonarr</span>
+                <span class="dim" v-else>{{ item.reason || "Can't be deleted" }}</span>
               </td>
               <td>
-                <button class="btn-danger" :disabled="!item.resolved || deletingID === item.jellyfin_item_id"
+                <button class="btn-danger" :disabled="!item.resolved || deletingID === item.id"
                         @click="deleteItem(item)">
-                  {{ deletingID === item.jellyfin_item_id ? 'Deleting…' : 'Delete now' }}
+                  {{ deletingID === item.id ? 'Deleting…' : 'Delete now' }}
                 </button>
               </td>
             </tr>
@@ -92,7 +92,7 @@
             </div>
             <label v-else class="checkbox-label">
               <input type="checkbox" v-model="settings.values.daemon_enabled">
-              {{ settings.values.daemon_enabled ? 'Enabled' : 'Disabled' }}
+              Enabled
             </label>
             <p class="hint">When disabled, nothing is deleted automatically. The "Ripe for deletion" tab still lists what qualifies, and you delete from there.</p>
           </div>
@@ -102,7 +102,7 @@
           <legend>Cleanup timing</legend>
           <div class="field-row" v-for="f in [
             {key:'movies_grace_period', label:'Delete movies after', hint: 'How long after a movie is fully watched before it is deleted. e.g. 7d, 36h, 2w.'},
-            {key:'tv_grace_period', label:'Delete TV episodes after', hint: 'How long after an episode is fully watched before its series is checked for deletion. e.g. 7d, 36h, 2w.'},
+            {key:'tv_grace_period', label:'Delete TV seasons after', hint: 'How long after the last episode of a fully watched season stops playing before the season is deleted. e.g. 7d, 36h, 2w.'},
           ]" :key="f.key">
             <label>{{ f.label }}</label>
             <div v-if="settings.env_managed[f.key]" class="locked-field">

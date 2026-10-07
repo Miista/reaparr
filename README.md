@@ -45,14 +45,21 @@ For each item in the intersection, Reaparr resolves it to Radarr/Sonarr's own
 internal ID before deleting:
 
 - **Movies** resolve to Radarr via the item's TMDB ID.
-- **Episodes** resolve to Sonarr via the *parent series'* TVDB ID (not the
-  episode's own TVDB ID) — Sonarr tracks and deletes at the series level, so
-  a season pack is treated as one unit, matching how Sonarr already tracks
-  it as a single release.
+- **TV is judged per season, never per episode.** Played episodes are
+  grouped by series and season, and the series is matched to Sonarr via its
+  TVDB ID. A season is only eligible once **every** episode Sonarr tracks
+  for it has aired, has a file, and is played in Jellyfin (an episode counts
+  as played if any user played it), and the most recent stop event across
+  the season's episodes is past the TV grace period. A season that is still
+  airing, or has an episode Sonarr hasn't downloaded, is never eligible.
+  Deleting a season first unmonitors it (so Sonarr won't re-download it),
+  then deletes that season's episode files. The series and its other
+  seasons are left alone.
 
 If an item can't be matched into Radarr or Sonarr (e.g. missing provider ID,
 or Radarr/Sonarr simply doesn't track that title), it's logged as a warning
-and skipped — not retried as an error. A genuine lookup or delete failure
+and skipped — not retried as an error. The dashboard shows the reason on
+that row. A genuine lookup or delete failure
 (e.g. Radarr/Sonarr unreachable) is logged as an error and naturally
 retried on the next sweep, since there's no state marking it as "handled."
 
@@ -145,7 +152,7 @@ setting's key upper-cased, with `.` replaced by `_`.
 | `REAPARR_SETTING_SEERR_URL` | `http://seerr:5055` | Seerr base URL — see "Seerr cleanup" above |
 | `REAPARR_SETTING_SEERR_API_KEY` | — | Seerr API key. Required for sweeps to run |
 | `REAPARR_SETTING_MOVIES_GRACE_PERIOD` | `7d` | How long after the last `VideoPlaybackStopped` event a still-played movie must wait before deletion (the grace period — see below) |
-| `REAPARR_SETTING_TV_GRACE_PERIOD` | `7d` | Same, for TV episodes — configured independently of the movies grace period, e.g. a shorter one for movies (single-sitting watches) and a longer one for TV (a season pack might sit half-watched between episodes for a while) |
+| `REAPARR_SETTING_TV_GRACE_PERIOD` | `7d` | Same, for TV seasons, measured from the last stop of any episode in the season — configured independently of the movies grace period |
 | `REAPARR_SETTING_POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
 | `REAPARR_SETTING_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 | `REAPARR_SETTING_DAEMON_ENABLED` | `true` | Whether the scheduled sweep deletes automatically. When `false`, nothing is deleted on schedule — the dashboard still lists what's ripe for deletion and you delete from there. An unparseable value counts as `false` |
