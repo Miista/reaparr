@@ -75,6 +75,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .run-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pill-color); animation: pulse 1.6s ease-in-out infinite; }
 .run-pill.running { --pill-color: var(--green); --pill-bg: oklch(0.3 0.08 155 / .35); --pill-border: oklch(0.5 0.12 155 / .5); }
 .run-pill.manual { --pill-color: oklch(0.8 0.12 200); --pill-bg: oklch(0.3 0.08 200 / .35); --pill-border: oklch(0.5 0.12 200 / .5); }
+.run-pill.checking { --pill-color: var(--muted-2); --pill-bg: #1c1e27; --pill-border: var(--border-2); }
 .run-pill.stopped { --pill-color: var(--amber); --pill-bg: oklch(0.3 0.08 80 / .3); --pill-border: oklch(0.5 0.12 80 / .5); }
 
 main {

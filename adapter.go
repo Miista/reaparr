@@ -327,21 +327,29 @@ func (l *liveSweeper) Library() ([]api.LibraryItem, error) {
 }
 
 // SetKept implements api.Sweeper: keeps or unkeeps Radarr movies / Sonarr
-// series by their own IDs, then refreshes the due list (kept items leave
-// it; unkept watched ones return).
+// series by their own IDs, and updates the due list before returning so
+// the dashboard can show the result immediately: kept items are simply
+// dropped from it; unkept ones need a rebuild to find out whether they're
+// watched, so that runs synchronously.
 func (l *liveSweeper) SetKept(refs []api.LibraryRef, keep bool) error {
 	ids := map[arrService][]int{}
+	touched := map[libraryItem]bool{}
 	for _, r := range refs {
 		svc := arrService(r.Service)
 		if svc != serviceRadarr && svc != serviceSonarr {
 			return fmt.Errorf("unknown service %q", r.Service)
 		}
 		ids[svc] = append(ids[svc], r.ID)
+		touched[libraryItem{service: svc, id: r.ID}] = true
 	}
 	if err := l.current().setKept(ids, keep); err != nil {
 		return err
 	}
-	go l.RefreshPreview()
+	if keep {
+		l.dropFromPreviewWhere(func(d dueItem) bool { return touched[arrRef(d)] })
+	} else {
+		l.RefreshPreview()
+	}
 	return nil
 }
 

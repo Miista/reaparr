@@ -98,6 +98,9 @@ function App() {
       document.addEventListener('keydown', (e) => this.onDialogKey(e));
       await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections(), this.loadLibrary()]);
       this.testConfiguredConnections();
+      // Only now — with status and connections loaded and the tests started
+      // (they count as pending until done) — can problems be judged.
+      this.loaded = true;
     },
 
     // --- Status ---------------------------------------------------------
@@ -138,7 +141,16 @@ function App() {
       return this.requirements.filter((r) => r.state === 'ok').length;
     },
 
+    loaded: false, // initial status/connections load finished
+
+    // showProblems gates the banner, alert dots and problem badge until the
+    // first load has settled, so they don't flash on page load.
+    get showProblems() {
+      return this.loaded && (this.missingServices.length > 0 || this.problems.length > 0);
+    },
+
     get runState() {
+      if (!this.loaded) return { label: 'Checking…', cls: 'checking' };
       if (this.missingServices.length) return { label: 'Not running', cls: 'stopped' };
       if (this.problems.length) return { label: 'Connection problem', cls: 'stopped' };
       if (!this.daemonEnabled) return { label: 'Manual only', cls: 'manual' };
@@ -396,6 +408,16 @@ function App() {
     },
 
     async setKept(items, keep) {
+      // Optimistic: flip the toggles and, when keeping, drop the matching
+      // Due rows (a series takes all its seasons) right away.
+      const refs = new Set(items.map((it) => `${it.service}:${it.id}`));
+      const before = items.map((it) => it.kept);
+      for (const it of items) it.kept = keep;
+      if (keep) {
+        this.due = this.due.filter((d) => !refs.has(`${d.arr_service}:${d.arr_id}`));
+        this.selected = this.selected.filter((id) => this.due.some((d) => d.id === id));
+      }
+
       this.libraryBusy = true;
       this.libraryError = '';
       try {
@@ -406,12 +428,12 @@ function App() {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Update failed.');
-        for (const it of items) it.kept = keep;
-        // The backend rebuilds the due list in the background; pick it up.
-        setTimeout(() => this.loadDue(), 2500);
+        // The backend has already updated its due list before responding.
+        await this.loadDue();
       } catch (err) {
+        items.forEach((it, i) => { it.kept = before[i]; });
         this.libraryError = err.message;
-        await this.loadLibrary();
+        await Promise.all([this.loadLibrary(), this.loadDue()]);
       } finally {
         this.libraryBusy = false;
       }
