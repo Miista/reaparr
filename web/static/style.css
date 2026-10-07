@@ -351,10 +351,50 @@ h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
 .save-bar.invalid .msg, .save-bar.failed .msg { --bar-color: var(--red-text); }
 .with-bar { padding-bottom: 72px; }
 
+.tab-icon, .tab-label .short { display: none; }
+
 @media (max-width: 640px) {
   .topbar { padding: 14px 16px; }
-  main { padding: 28px 16px 64px; }
+  main { padding: 28px 16px calc(96px + env(safe-area-inset-bottom)); }
   h1 { font-size: 26px; }
+
+  /* Bottom tab bar */
+  .tabs {
+    position: fixed; z-index: 40; left: 0; right: 0; bottom: 0; max-width: none; align-self: auto;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; overflow: visible;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); border-radius: 0;
+    border: none; border-top: 1px solid var(--border);
+    background: rgba(14,15,20,.92); backdrop-filter: blur(14px);
+  }
+  .tabs a {
+    position: relative; flex-direction: column; justify-content: center; gap: 3px; padding: 6px 4px;
+    font-size: 11px; font-weight: 500; border-radius: 10px;
+  }
+  .tabs a.active { background: transparent; box-shadow: none; color: oklch(0.8 0.15 290); font-weight: 600; }
+  .tab-icon { display: flex; }
+  .tab-label .full { display: none; }
+  .tab-label .short { display: inline; }
+  /* Count badge / alert dot sit on the icon's top-right corner. */
+  .tabs .tab-badge, .tabs .alert-dot { position: absolute; top: 2px; left: calc(50% + 6px); }
+  .tabs .tab-badge { font-size: 10px; padding: 1px 5px; }
+  .tabs .tab-badge:not(.hot) { display: none; }
+
+  /* Settings sub-tabs: a segmented control floating just above the tab bar. */
+  .subtabs {
+    position: fixed; z-index: 39; left: 12px; right: 12px; bottom: calc(72px + env(safe-area-inset-bottom));
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 0; padding: 4px;
+    border: 1px solid var(--border); border-radius: 12px;
+    background: rgba(18,19,26,.92); backdrop-filter: blur(14px); box-shadow: 0 10px 30px -10px rgba(0,0,0,.7);
+  }
+  .subtabs a { justify-content: center; padding: 9px 8px; margin: 0; border: none; border-radius: 8px; }
+  .subtabs a.active {
+    color: #fff; background: oklch(0.55 0.2 290);
+    box-shadow: 0 4px 16px oklch(0.55 0.2 290 / .45), inset 0 1px 0 rgba(255,255,255,.18);
+  }
+
+  /* Sticky save bars sit above both bottom bars. */
+  .save-bar { bottom: calc(128px + env(safe-area-inset-bottom)); }
+  main:has(.subtabs) { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
 }
 
 /* Confirmation dialog */

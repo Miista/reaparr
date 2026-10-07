@@ -35,9 +35,21 @@
 
     <div class="page-head">
       <nav class="tabs">
-        <a :class="{ active: tab === 'due' }" @click="tab = 'due'">Due for deletion<span class="tab-badge" :class="{ hot: due.length }">{{ due.length }}</span></a>
-        <a :class="{ active: tab === 'kept' }" @click="tab = 'kept'">Kept<span class="tab-badge">{{ kept.length }}</span></a>
-        <a :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Settings<span class="alert-dot" v-if="problems.length || missingServices.length"></span></a>
+        <a :class="{ active: tab === 'due' }" @click="tab = 'due'">
+          <span class="tab-icon"><svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18.5L14 2.5"></path><path d="M14 2.5C10.2 1.2 5.6 2 2.5 5c3.3-1 6.8-.6 9.9 1.2"></path><path d="M8.3 13.9l2.6 1.3"></path></svg></span>
+          <span class="tab-label"><span class="full">Due for deletion</span><span class="short">Due</span></span>
+          <span class="tab-badge" :class="{ hot: due.length }">{{ due.length }}</span>
+        </a>
+        <a :class="{ active: tab === 'kept' }" @click="tab = 'kept'">
+          <span class="tab-icon"><svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 2.5l6 2.5v4.5c0 3.8-2.6 6.6-6 8-3.4-1.4-6-4.2-6-8V5z"></path></svg></span>
+          <span class="tab-label">Kept</span>
+          <span class="tab-badge">{{ kept.length }}</span>
+        </a>
+        <a :class="{ active: tab === 'settings' }" @click="tab = 'settings'">
+          <span class="tab-icon"><svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="2.6"></circle><path d="M10 1.8v2.4M10 15.8v2.4M1.8 10h2.4M15.8 10h2.4M4.2 4.2l1.7 1.7M14.1 14.1l1.7 1.7M4.2 15.8l1.7-1.7M14.1 5.9l1.7-1.7"></path></svg></span>
+          <span class="tab-label">Settings</span>
+          <span class="alert-dot" v-if="problems.length || missingServices.length"></span>
+        </a>
       </nav>
       <div class="title-block">
         <h1>{{ { due: 'Due for deletion', kept: 'Kept', settings: 'Settings' }[tab] }}</h1>
