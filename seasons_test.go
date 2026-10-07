@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Miista/reaparr/internal/api"
 )
 
 func intPtr(i int) *int { return &i }
@@ -401,20 +403,17 @@ func TestKeeper_TagLookupFails_DeletesNothing(t *testing.T) {
 	}
 }
 
-// Keeping a season creates the tag if needed and tags the whole series.
-func TestKeeper_KeepSeason_TagsSeries(t *testing.T) {
+// Keeping a series creates the tag if needed and tags it via the series
+// editor.
+func TestKeeper_KeepSeries_CreatesTagAndTags(t *testing.T) {
 	sonarr, srv := newFakeSonarr(t, season1())
-	sw := newSeasonSweeper(t,
-		map[string][]jellyfinItem{"u1": {playedEpisode("e1", 1, 1), playedEpisode("e2", 1, 2)}},
-		[]jellyfinActivityEntry{stopped("e2", 48*time.Hour)},
-		srv)
-	sw.keepTag = "reaparr-keep"
-
-	d, ok, err := sw.findOneCandidate(seasonItemID("jf-series-1", 1))
-	if err != nil || !ok {
-		t.Fatalf("findOneCandidate = ok %v, err %v", ok, err)
+	sw := &sweeper{
+		arr:     &arrClient{sonarrURL: srv.URL, sonarrAPIKey: "k", httpClient: srv.Client(), log: testLogger(t)},
+		keepTag: "reaparr-keep",
+		log:     testLogger(t),
 	}
-	if err := sw.keep(d); err != nil {
+
+	if err := sw.setKept(map[arrService][]int{serviceSonarr: {7}}, true); err != nil {
 		t.Fatal(err)
 	}
 	if len(sonarr.tags) != 1 || sonarr.tags[0].Label != "reaparr-keep" {
@@ -426,29 +425,19 @@ func TestKeeper_KeepSeason_TagsSeries(t *testing.T) {
 	}
 }
 
-// Keeping several seasons of one series tags that series once, in one
-// bulk call.
-func TestKeeper_KeepMany_DedupesSeries(t *testing.T) {
-	episodes := append(season1(),
-		sonarrEpisode{ID: 201, SeasonNumber: 2, EpisodeNumber: 1, HasFile: true, EpisodeFileID: 21, AirDateUtc: aired()},
-	)
-	sonarr, srv := newFakeSonarr(t, episodes)
-	sw := newSeasonSweeper(t,
-		map[string][]jellyfinItem{"u1": {playedEpisode("e1", 1, 1), playedEpisode("e2", 1, 2), playedEpisode("e3", 2, 1)}},
-		[]jellyfinActivityEntry{stopped("e2", 48*time.Hour), stopped("e3", 48*time.Hour)},
-		srv)
-	sw.keepTag = "reaparr-keep"
+// Keeping the same series twice in one request (e.g. two of its seasons
+// selected on the Due tab) tags it once.
+func TestKeeper_SetKept_DedupesSeries(t *testing.T) {
+	sonarr, srv := newFakeSonarr(t, season1())
+	live := &liveSweeper{}
+	live.set(&sweeper{
+		arr:     &arrClient{sonarrURL: srv.URL, sonarrAPIKey: "k", httpClient: srv.Client(), log: testLogger(t)},
+		keepTag: "reaparr-keep",
+		log:     testLogger(t),
+	})
 
-	candidates, err := sw.findCandidates()
-	if err != nil || len(candidates) != 2 {
-		t.Fatalf("candidates = %+v, err %v; want both seasons", candidates, err)
-	}
-	tagged, err := sw.keepMany(candidates)
-	if err != nil {
+	if err := live.SetKept([]api.LibraryRef{{Service: "sonarr", ID: 7}, {Service: "sonarr", ID: 7}}, true); err != nil {
 		t.Fatal(err)
-	}
-	if tagged != 1 {
-		t.Errorf("tagged = %d, want 1 (one series)", tagged)
 	}
 	if ids := sonarr.editorBody["seriesIds"].([]any); len(ids) != 1 || ids[0] != float64(7) {
 		t.Errorf("seriesIds = %v, want [7]", ids)

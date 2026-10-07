@@ -54,7 +54,6 @@ function App() {
     deletingID: null,
     deletingSelected: false,
     selected: [], // ids of selected rows
-    keepingID: null,
     keepingSelected: false,
 
     library: [], // every Radarr movie / Sonarr series: { service, id, title, year, kind, kept }
@@ -252,24 +251,44 @@ function App() {
           tone: 'keep',
         })) return;
       }
+      await this.keepDueRows([item]);
+    },
 
-      this.keepingID = item.id;
+    // keepDueRows keeps the movies/series behind Due rows. Keeping can't
+    // delete anything, so there's no live re-check: the rows (and any other
+    // seasons of a kept series) leave the list immediately, and the tag is
+    // set directly by Radarr/Sonarr ID — the same fast path as the Library.
+    async keepDueRows(rows) {
+      const refs = [];
+      const seen = new Set();
+      for (const r of rows) {
+        const key = `${r.arr_service}:${r.arr_id}`;
+        if (r.resolved && r.arr_service && !seen.has(key)) {
+          seen.add(key);
+          refs.push({ service: r.arr_service, id: r.arr_id });
+        }
+      }
+      if (!refs.length) return;
+
+      this.due = this.due.filter((d) => !seen.has(`${d.arr_service}:${d.arr_id}`));
+      this.selected = this.selected.filter((id) => this.due.some((d) => d.id === id));
+      for (const it of this.library) {
+        if (seen.has(`${it.service}:${it.id}`)) it.kept = true;
+      }
+
       this.dueError = '';
+      this.deleteResult = '';
       try {
-        const res = await fetch('/api/keep', {
+        const res = await fetch('/api/library/keep', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: item.id }),
+          body: JSON.stringify({ keep: true, items: refs }),
         });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || 'Keep failed.');
-        }
-        await Promise.all([this.loadDue(), this.loadLibrary()]);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Keep failed.');
       } catch (err) {
         this.dueError = err.message;
-      } finally {
-        this.keepingID = null;
+        await Promise.all([this.loadDue(), this.loadLibrary()]);
       }
     },
 
@@ -313,20 +332,8 @@ function App() {
       })) return;
 
       this.keepingSelected = true;
-      this.dueError = '';
-      this.deleteResult = '';
       try {
-        const res = await fetch('/api/keep-selected', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || 'Keep failed.');
-        this.selected = [];
-        await Promise.all([this.loadDue(), this.loadLibrary()]);
-      } catch (err) {
-        this.dueError = err.message;
+        await this.keepDueRows(rows);
       } finally {
         this.keepingSelected = false;
       }

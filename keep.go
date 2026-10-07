@@ -243,42 +243,6 @@ func (s *sweeper) setKept(ids map[arrService][]int, keep bool) error {
 	return nil
 }
 
-// keep tags a due item's movie or series as a keeper.
-func (s *sweeper) keep(d dueItem) error {
-	if !d.resolved {
-		return fmt.Errorf("'%s' isn't matched to radarr/sonarr: %s", d.title, d.reason)
-	}
-	_, err := s.keepMany([]dueItem{d})
-	return err
-}
-
-// keepMany tags the movies/series of the given due items as keepers — one
-// bulk tag call per service. Unresolved items are skipped; seasons of the
-// same series collapse into one series. Returns how many movies/series
-// were tagged.
-func (s *sweeper) keepMany(items []dueItem) (int, error) {
-	ids := map[arrService][]int{}
-	seen := map[string]bool{}
-	for _, d := range items {
-		if !d.resolved {
-			continue
-		}
-		svc, arrID := serviceRadarr, d.movie.ID
-		if d.kind == kindSeason {
-			svc, arrID = serviceSonarr, d.season.seriesID
-		}
-		if key := fmt.Sprintf("%s:%d", svc, arrID); !seen[key] {
-			seen[key] = true
-			ids[svc] = append(ids[svc], arrID)
-		}
-	}
-
-	if err := s.setKept(ids, true); err != nil {
-		return 0, err
-	}
-	return len(ids[serviceRadarr]) + len(ids[serviceSonarr]), nil
-}
-
 // poster fetches a movie's / series' small poster from Radarr/Sonarr's own
 // media cover cache (never from the internet), for the dashboard. The
 // caller must close the body.

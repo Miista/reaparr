@@ -106,8 +106,8 @@
               <span class="sub">{{ deletionWhen(item).sub }}</span>
             </div>
             <div class="row-actions">
-              <button class="btn-row-keep" @click="keepItem(item)" :disabled="!item.resolved || keepingID === item.id" :title="item.kind === 'season' ? 'Keeps the whole series' : 'Never delete this movie'">
-                {{ keepingID === item.id ? 'Keeping…' : 'Keep' }}
+              <button class="btn-row-keep" @click="keepItem(item)" :disabled="!item.resolved" :title="item.kind === 'season' ? 'Keeps the whole series' : 'Never delete this movie'">
+                Keep
               </button>
               <button class="btn-row-delete" @click="deleteItem(item)" :disabled="!item.resolved || deletingID === item.id">
                 {{ deletingID === item.id ? 'Deleting…' : 'Delete now' }}

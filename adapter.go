@@ -239,66 +239,6 @@ func (l *liveSweeper) dropFromPreviewWhere(drop func(dueItem) bool) {
 	l.cachedDue = remaining
 }
 
-// Keep implements api.Sweeper: marks a listed movie or season as a keeper
-// by tagging it in Radarr/Sonarr (a season keeps its whole series). The
-// item is re-checked live first, like a delete.
-func (l *liveSweeper) Keep(id string) error {
-	s := l.current()
-	d, ok, err := s.findOneCandidate(id)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("%s is no longer listed (re-verified just now)", id)
-	}
-	if err := s.keep(d); err != nil {
-		return err
-	}
-	if d.kind == kindSeason {
-		// Every season of the series is now kept.
-		l.dropFromPreviewWhere(func(x dueItem) bool { return x.season != nil && x.season.seriesID == d.season.seriesID })
-	} else {
-		l.dropFromPreview(id)
-	}
-	return nil
-}
-
-// KeepSelected implements api.Sweeper: Keep for several listed items at
-// once, after one fresh re-check. Returns how many movies/series were
-// tagged (seasons of one series count once).
-func (l *liveSweeper) KeepSelected(ids []string) (int, error) {
-	s := l.current()
-	candidates, err := s.findCandidates()
-	if err != nil {
-		return 0, err
-	}
-	selected := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		selected[id] = true
-	}
-	var targets []dueItem
-	keptSeries := map[int]bool{}
-	for _, d := range candidates {
-		if selected[d.id] {
-			targets = append(targets, d)
-			if d.kind == kindSeason && d.resolved {
-				keptSeries[d.season.seriesID] = true
-			}
-		}
-	}
-	tagged, err := s.keepMany(targets)
-	if err != nil {
-		// Part may have been tagged; rebuild from live data to show the
-		// true state rather than guessing.
-		l.RefreshPreview()
-		return tagged, err
-	}
-	l.dropFromPreviewWhere(func(x dueItem) bool {
-		return (selected[x.id] && x.kind == kindMovie && x.resolved) || (x.season != nil && keptSeries[x.season.seriesID])
-	})
-	return tagged, nil
-}
-
 // Poster implements api.Sweeper.
 func (l *liveSweeper) Poster(service string, id int) (io.ReadCloser, string, error) {
 	svc := arrService(service)
@@ -339,8 +279,11 @@ func (l *liveSweeper) SetKept(refs []api.LibraryRef, keep bool) error {
 		if svc != serviceRadarr && svc != serviceSonarr {
 			return fmt.Errorf("unknown service %q", r.Service)
 		}
-		ids[svc] = append(ids[svc], r.ID)
-		touched[libraryItem{service: svc, id: r.ID}] = true
+		ref := libraryItem{service: svc, id: r.ID}
+		if !touched[ref] {
+			touched[ref] = true
+			ids[svc] = append(ids[svc], r.ID)
+		}
 	}
 	if err := l.current().setKept(ids, keep); err != nil {
 		return err

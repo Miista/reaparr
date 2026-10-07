@@ -48,11 +48,6 @@ type Sweeper interface {
 	NextRun() time.Time
 	// RefreshPreview rebuilds the cached due list from live data now.
 	RefreshPreview()
-	// Keep marks a listed item as a keeper (a season keeps its series).
-	Keep(id string) error
-	// KeepSelected is Keep for several items; returns how many
-	// movies/series were tagged.
-	KeepSelected(ids []string) (int, error)
 	// Library lists every movie and series in Radarr/Sonarr.
 	Library() ([]LibraryItem, error)
 	// SetKept keeps (keep=true) or unkeeps Radarr movies / Sonarr series.
@@ -150,8 +145,6 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/due", s.handleDue)
 	mux.HandleFunc("/api/due/delete", s.handleDeleteDue)
 	mux.HandleFunc("/api/due/delete-selected", s.handleDeleteSelected)
-	mux.HandleFunc("/api/keep", s.handleKeep)
-	mux.HandleFunc("/api/keep-selected", s.handleKeepSelected)
 	mux.HandleFunc("/api/library", s.handleLibrary)
 	mux.HandleFunc("/api/library/keep", s.handleLibraryKeep)
 	mux.HandleFunc("/api/poster/", s.handlePoster)
@@ -180,47 +173,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status["next_run"] = s.sweeper.NextRun().Format(time.RFC3339)
 	}
 	writeJSON(w, http.StatusOK, status)
-}
-
-// handleKeep marks one listed item as a keeper.
-func (s *Server) handleKeep(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		ID string `json:"id"`
-	}
-	if err := readJSON(r, &req); err != nil || req.ID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
-		return
-	}
-	if err := s.sweeper.Keep(req.ID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-// handleKeepSelected marks several listed items as keepers.
-func (s *Server) handleKeepSelected(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		IDs []string `json:"ids"`
-	}
-	if err := readJSON(r, &req); err != nil || len(req.IDs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ids is required"})
-		return
-	}
-	tagged, err := s.sweeper.KeepSelected(req.IDs)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]int{"kept": tagged})
 }
 
 // handlePoster proxies a poster from Radarr/Sonarr: GET
