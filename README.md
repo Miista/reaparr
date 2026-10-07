@@ -181,22 +181,23 @@ dashboard.
 
 Reaparr serves a small web dashboard on **port 8767** with three tabs:
 
-- **Ripe for deletion** — a preview of everything currently matching the
-  watched-and-past-grace-period rule, using the exact same fetch and
-  matching code the scheduled sweep uses (not a separate,
-  potentially-diverging check). The preview is held in memory only and
-  rebuilt on startup, every 15 minutes, and after any dashboard save —
-  independently of the sweep, which always does its own fresh check before
-  deleting. Each item can be deleted immediately via its own button, which
-  re-verifies that item live first, then calls the same Radarr/Sonarr
-  delete path the cron sweep uses. **Delete all** (after a confirmation)
-  runs a full sweep on demand: everything is re-checked live and whatever
-  still qualifies is deleted, including the Seerr cleanup.
-- **Settings** — the daemon toggle, grace periods, poll schedule, and log
-  level, editable unless locked by an env var (see "Configuration" above).
-  With the daemon disabled, nothing is deleted automatically and the
-  dashboard shows a "Daemon disabled" banner; deleting happens only via the
-  buttons above.
+- **Due for deletion** — every watched movie and fully watched TV season,
+  with when the scheduled run will delete it ("Will be deleted in"). It
+  uses the exact same fetch and matching code the scheduled sweep uses
+  (not a separate, potentially-diverging check). The list is held in
+  memory only and rebuilt on startup, every 15 minutes, after any dashboard
+  save, and when you press Refresh.
+  **The grace period only governs the scheduled run.** Anything in the list
+  can be deleted by hand right away: **Delete now** for one item, or tick
+  rows (or the header checkbox for all) and **Delete N selected** (both
+  after a confirmation). A manual delete re-checks the item live first
+  (still watched; a season still fully watched), then calls the same
+  Radarr/Sonarr delete path the scheduled run uses; deleting a selection
+  also runs the Seerr cleanup.
+- **Settings** — grace periods, poll schedule, log level, and the daemon
+  toggle, editable unless locked by an env var (see "Configuration" above).
+  With the daemon disabled nothing is deleted automatically — the header
+  shows "Manual only" — and deleting happens only via the buttons above.
 - **Connections** — Jellyfin/Radarr/Sonarr/Seerr URL + API key, each with a
   "Test connection" button, editable unless locked by an env var.
 

@@ -4,226 +4,238 @@
 <meta charset="utf-8">
 <title>Reaparr</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/png" href="icon.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<div id="app" v-scope="App()" @vue:mounted="mounted">
+<div id="app" class="page" v-scope="App()" @vue:mounted="mounted" v-cloak>
 
   <header class="topbar">
-    <div class="brand">Reaparr</div>
+    <div class="brand">
+      <div class="brand-icon"><img src="icon.png" alt="Reaparr"></div>
+      <span>Reaparr</span>
+    </div>
+    <div class="run-pill" :class="runState.cls"><span class="dot"></span>{{ runState.label }}</div>
   </header>
 
   <main>
-    <div class="banner-warning" v-if="missingServices.length">
-      Reaparr is not running: configure {{ missingServices.join(', ') }}.
-      <a href="#" @click.prevent="tab = 'connections'">Go to Connections</a>
-    </div>
-    <div class="banner-info" v-else-if="!daemonEnabled">
-      Daemon disabled — nothing is deleted automatically. Delete from the "Ripe for deletion" tab.
-      <a href="#" @click.prevent="tab = 'settings'">Settings</a>
+    <div class="setup-banner" v-if="missingServices.length || problems.length">
+      <div class="bang">!</div>
+      <div class="text">
+        <span class="title">{{ missingServices.length ? 'Reaparr is not running' : "Reaparr can't reach its services" }}</span>
+        <span class="sub">{{ problems.map((p) => p.name + ': ' + (p.state === 'fail' ? 'connection failed' : 'not configured')).join(' · ') }}</span>
+      </div>
+      <div class="progress">
+        <div class="track"><div class="fill" :style="{ width: Math.round(doneCount / 3 * 100) + '%' }"></div></div>
+        <span class="count">{{ doneCount }}/3</span>
+      </div>
     </div>
 
-    <nav class="tabs">
-      <button :class="{active: tab === 'due'}" @click="tab = 'due'">Ripe for deletion</button>
-      <button :class="{active: tab === 'settings'}" @click="tab = 'settings'">Settings</button>
-      <button :class="{active: tab === 'connections'}" @click="tab = 'connections'">Connections</button>
-    </nav>
+    <div class="page-head">
+      <nav class="tabs">
+        <a :class="{ active: tab === 'due' }" @click="tab = 'due'">Due for deletion<span class="tab-badge" :class="{ hot: due.length }">{{ due.length }}</span></a>
+        <a :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Settings</a>
+        <a :class="{ active: tab === 'connections' }" @click="tab = 'connections'">Connections</a>
+      </nav>
+      <div class="title-block">
+        <h1>{{ { due: 'Due for deletion', settings: 'Settings', connections: 'Connections' }[tab] }}</h1>
+        <p class="env-note" v-if="tab !== 'due'">
+          Fields locked with
+          <span class="env-chip"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>ENV</span>
+          are pinned by an environment variable and cannot be changed here.
+        </p>
+      </div>
+    </div>
 
     <!-- Due for deletion -->
-    <div v-if="tab === 'due'">
-      <div class="settings-submit-row" style="margin-bottom:16px;">
-        <button class="btn-secondary" @click="loadDue(true)" :disabled="dueLoading || missingServices.length">{{ dueLoading ? 'Refreshing…' : 'Refresh' }}</button>
-        <button class="btn-danger" @click="deleteAll" :disabled="deletingAll || !due.length || missingServices.length">
-          {{ deletingAll ? 'Deleting…' : 'Delete all' }}
+    <div class="stack" v-if="tab === 'due'">
+      <div class="due-toolbar">
+        <div class="due-count">
+          <span class="n" :class="{ hot: due.length }">{{ due.length }}</span>
+          <span class="label">{{ due.length === 1 ? 'item due for deletion' : 'items due for deletion' }}</span>
+        </div>
+        <!-- Delete sits left of Refresh so Refresh stays put when it appears. -->
+        <button class="btn btn-danger" v-if="selected.length" @click="deleteSelected" :disabled="deletingSelected || missingServices.length">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.6 8.5h5.8l.6-8.5"></path></svg>
+          {{ deletingSelected ? 'Deleting…' : `Delete ${selected.length} selected` }}
         </button>
-        <span class="dim" v-if="due.length">{{ due.length }} item(s) ripe for deletion</span>
+        <button class="btn" @click="loadDue(true)" :disabled="dueLoading || missingServices.length">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" :class="{ spin: dueLoading }"><path d="M12 7a5 5 0 1 1-1.5-3.6M12 1.5v3h-3"></path></svg>
+          {{ dueLoading ? 'Refreshing…' : 'Refresh' }}
+        </button>
       </div>
-      <p class="error-box" v-if="dueError">{{ dueError }}</p>
-      <p class="success-box" v-if="deleteAllResult">{{ deleteAllResult }}</p>
+      <p class="error-text" v-if="dueError">{{ dueError }}</p>
+      <p class="ok-text" v-if="deleteResult">{{ deleteResult }}</p>
 
-      <div class="table-scroll" v-if="due.length">
-        <table class="data-table">
-          <thead>
-            <tr><th>Title</th><th>Kind</th><th>Stopped playing</th><th>Grace period</th><th>Status</th><th></th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in due" :key="item.id">
-              <td>{{ item.title }}</td>
-              <td class="mono dim">{{ item.kind }}</td>
-              <td class="mono dim">{{ formatTime(item.stopped_at) }}</td>
-              <td class="mono dim">{{ item.grace_period }}</td>
-              <td>
-                <span v-if="item.resolved">Ready to delete</span>
-                <span class="dim" v-else>{{ item.reason || "Can't be deleted" }}</span>
-              </td>
-              <td>
-                <button class="btn-danger" :disabled="!item.resolved || deletingID === item.id"
-                        @click="deleteItem(item)">
-                  {{ deletingID === item.id ? 'Deleting…' : 'Delete now' }}
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <div class="card table-card" v-if="due.length">
+        <div class="table">
+          <div class="row head"><button type="button" class="check" :class="{ on: allSelected, partial: someSelected && !allSelected }" @click="toggleAll" :disabled="!resolvedCount" aria-label="Select all"><svg v-if="allSelected" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#fff" stroke-width="2"><path d="M2.5 6.2l2.3 2.3 4.7-5"></path></svg></button><span>Title</span><span>Stopped playing</span><span>Will be deleted in</span><span></span></div>
+          <div class="row" v-for="item in due" :key="item.id" :class="{ selected: isSelected(item) }">
+            <button type="button" class="check" :class="{ on: isSelected(item) }" @click="toggleSelect(item)" :disabled="!item.resolved" :aria-label="'Select ' + item.title"><svg v-if="isSelected(item)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#fff" stroke-width="2"><path d="M2.5 6.2l2.3 2.3 4.7-5"></path></svg></button>
+            <div class="cell-title">
+              <div class="tile" :style="{ '--hue': hueFor(item.title) }">{{ item.title.charAt(0) }}</div>
+              <div class="cell-stack">
+                <span class="item-title" :title="item.title">{{ item.title }}</span>
+                <span class="kind" :class="item.kind">{{ item.kind }}</span>
+              </div>
+            </div>
+            <div class="cell-stack">
+              <span class="primary-line">{{ ago(item.stopped_at) }}</span>
+              <span class="mono-sub">{{ formatDateTime(item.stopped_at) }}</span>
+            </div>
+            <div class="cell-stack">
+              <span class="primary-line" :class="deletionWhen(item).cls">{{ deletionWhen(item).main }}</span>
+              <span class="sub">{{ deletionWhen(item).sub }}</span>
+            </div>
+            <button class="btn-row-delete" @click="deleteItem(item)" :disabled="!item.resolved || deletingID === item.id">
+              {{ deletingID === item.id ? 'Deleting…' : 'Delete now' }}
+            </button>
+          </div>
+        </div>
       </div>
-      <p v-else-if="!dueLoading && !dueError" class="dim">Nothing is currently ripe for deletion.</p>
+
+      <div class="empty" v-else-if="!dueLoading && !dueError">
+        <div class="icon"><img src="icon.png" alt=""></div>
+        <span class="title">Nothing watched yet</span>
+        <span class="sub">Watched movies, and TV seasons watched in full, will appear here. Delete them right away, or let the scheduled run delete them once their grace period has passed.</span>
+      </div>
     </div>
 
     <!-- Settings -->
-    <div v-if="tab === 'settings'">
-      <p class="dim">
-        Fields locked with <svg class="lock-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg> are pinned by an environment variable and cannot be changed here.
-      </p>
-
-      <form @submit.prevent="saveSettings" class="settings-form">
-        <fieldset>
-          <legend>Daemon</legend>
-          <div class="field-row">
-            <label>Delete automatically on schedule</label>
-            <div v-if="settings.env_managed.daemon_enabled" class="locked-field">
-              <div class="locked-field-row">
-                <span class="mono">{{ settings.values.daemon_enabled ? 'enabled' : 'disabled' }}</span>
-                <span class="lock-badge">
-                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
-                </span>
-              </div>
-              <span class="locked-caption">Managed by <code>{{ settings.env_managed.daemon_enabled }}</code></span>
-            </div>
-            <label v-else class="checkbox-label">
-              <input type="checkbox" v-model="settings.values.daemon_enabled">
-              Enabled
-            </label>
-            <p class="hint">When disabled, nothing is deleted automatically. The "Ripe for deletion" tab still lists what qualifies, and you delete from there.</p>
+    <div class="stack with-bar" v-if="tab === 'settings'">
+      <section class="card" style="--hue: 25">
+        <div class="accent"></div>
+        <div class="card-head" style="align-items:center">
+          <div class="card-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10" cy="10" r="7.5"></circle><path d="M10 5.5V10l3 2"></path></svg></div>
+          <div class="card-text">
+            <h2>Cleanup timing</h2>
+            <p>How long watched media stays before it is removed.</p>
           </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Cleanup timing</legend>
-          <div class="field-row" v-for="f in [
-            {key:'movies_grace_period', label:'Delete movies after', hint: 'How long after a movie is fully watched before it is deleted. e.g. 7d, 36h, 2w.'},
-            {key:'tv_grace_period', label:'Delete TV seasons after', hint: 'How long after the last episode of a fully watched season stops playing before the season is deleted. e.g. 7d, 36h, 2w.'},
-          ]" :key="f.key">
-            <label>{{ f.label }}</label>
-            <div v-if="settings.env_managed[f.key]" class="locked-field">
-              <div class="locked-field-row">
-                <span class="mono">{{ settings.values[f.key] }}</span>
-                <span class="lock-badge">
-                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
-                </span>
-              </div>
-              <span class="locked-caption">Managed by <code>{{ settings.env_managed[f.key] }}</code></span>
-            </div>
-            <input v-else type="text" v-model="settings.values[f.key]" placeholder="7d">
-            <p class="hint">{{ f.hint }}</p>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Schedule &amp; logging</legend>
-          <div class="field-row">
-            <label>Poll schedule (cron expression)</label>
-            <div v-if="settings.env_managed.poll_schedule" class="locked-field">
-              <div class="locked-field-row">
-                <span class="mono">{{ settings.values.poll_schedule }}</span>
-                <span class="lock-badge">
-                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
-                </span>
-              </div>
-              <span class="locked-caption">Managed by <code>{{ settings.env_managed.poll_schedule }}</code></span>
-            </div>
-            <input v-else type="text" v-model="settings.values.poll_schedule" placeholder="@hourly">
-            <p class="hint">Standard cron expression or a descriptor like @hourly, @daily.</p>
-          </div>
-
-          <div class="field-row">
-            <label>Log level</label>
-            <div v-if="settings.env_managed.log_level" class="locked-field">
-              <div class="locked-field-row">
-                <span class="mono">{{ settings.values.log_level }}</span>
-                <span class="lock-badge">
-                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
-                </span>
-              </div>
-              <span class="locked-caption">Managed by <code>{{ settings.env_managed.log_level }}</code></span>
-            </div>
-            <select v-else v-model="settings.values.log_level">
-              <option value="debug">debug</option>
-              <option value="info">info</option>
-              <option value="warn">warn</option>
-              <option value="error">error</option>
-            </select>
-          </div>
-        </fieldset>
-
-        <p class="error-box" v-if="settingsError">{{ settingsError }}</p>
-        <div class="settings-submit-row">
-          <button type="submit">Save settings</button>
-          <span class="success-box" v-if="settingsSaved">Settings saved. Applied on the next sweep.</span>
         </div>
-      </form>
+        <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
+          <div class="duration-box" v-for="d in durationFields" :key="d.key" :class="{ invalid: !settings.env_managed[d.key] && !parseDuration(settings.values[d.key]) }">
+            <span class="field-label">{{ d.label }}
+              <span class="lock-label" v-if="settings.env_managed[d.key]"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ settings.env_managed[d.key] }}</span>
+            </span>
+            <div class="row-line">
+              <input class="duration-input" v-model="settings.values[d.key]" :readonly="settings.env_managed[d.key] ? true : null" placeholder="7d">
+              <span class="duration-human">{{ durationHuman(settings.values[d.key]) }}</span>
+            </div>
+            <p class="field-help">{{ d.help }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" style="--hue: 200">
+        <div class="accent"></div>
+        <div class="card-head" style="align-items:center">
+          <div class="card-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="14" height="13" rx="2"></rect><path d="M3 8h14M7 2.5v3M13 2.5v3"></path></svg></div>
+          <div class="card-text">
+            <h2>Schedule &amp; logging</h2>
+            <p>When Reaparr checks your library, and how much it writes to the log.</p>
+          </div>
+        </div>
+        <div class="card-grid">
+          <label class="field">
+            <span class="field-label">Poll schedule (cron expression)
+              <span class="lock-label" v-if="settings.env_managed.poll_schedule"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ settings.env_managed.poll_schedule }}</span>
+            </span>
+            <div class="cron-box" :class="{ invalid: !cronHuman(settings.values.poll_schedule), locked: settings.env_managed.poll_schedule }">
+              <input v-model="settings.values.poll_schedule" :readonly="settings.env_managed.poll_schedule ? true : null" placeholder="@hourly">
+              <span class="cron-pill" :class="{ invalid: !cronHuman(settings.values.poll_schedule) }"><span class="dot"></span>{{ cronHuman(settings.values.poll_schedule) || 'Invalid expression' }}</span>
+            </div>
+            <span class="field-help">Standard cron expression or a descriptor like @hourly, @daily.</span>
+          </label>
+          <div class="field">
+            <span class="field-label">Log level
+              <span class="lock-label" v-if="settings.env_managed.log_level"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ settings.env_managed.log_level }}</span>
+            </span>
+            <div class="select-wrap">
+              <select class="input" :class="{ locked: settings.env_managed.log_level }" v-model="settings.values.log_level" :disabled="!!settings.env_managed.log_level">
+                <option value="debug">debug</option>
+                <option value="info">info</option>
+                <option value="warn">warn</option>
+                <option value="error">error</option>
+              </select>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#8e91a1" stroke-width="1.8"><path d="M3 4.5l3 3 3-3"></path></svg>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" style="--hue: 290">
+        <div class="accent"></div>
+        <div class="card-head solo">
+          <div class="card-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 2.5v4M10 13.5v4M2.5 10h4M13.5 10h4"></path><circle cx="10" cy="10" r="3"></circle></svg></div>
+          <div class="card-text">
+            <h2>Delete automatically on schedule</h2>
+            <p>When disabled, nothing is deleted automatically. The "Due for deletion" tab still lists what qualifies, and you delete from there.</p>
+          </div>
+          <div class="switch-wrap">
+            <button type="button" class="switch" role="switch" :aria-checked="!!settings.values.daemon_enabled"
+                    :class="{ on: settings.values.daemon_enabled }" :disabled="!!settings.env_managed.daemon_enabled"
+                    @click="settings.values.daemon_enabled = !settings.values.daemon_enabled">
+              Enabled
+              <span class="track"><span class="knob"></span></span>
+            </button>
+            <span class="lock-label" v-if="settings.env_managed.daemon_enabled"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ settings.env_managed.daemon_enabled }}</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="save-bar" :class="settingsBar.cls">
+        <span class="msg"><span class="dot"></span>{{ settingsBar.msg }}</span>
+        <button class="btn btn-ghost" @click="discardSettings" :disabled="!settingsDirty">Discard</button>
+        <button class="btn btn-primary" @click="saveSettings" :disabled="!settingsValid">Save settings</button>
+      </div>
     </div>
 
     <!-- Connections -->
-    <div v-if="tab === 'connections'">
-      <p class="dim">
-        Fields locked with <svg class="lock-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg> are pinned by an environment variable and cannot be changed here.
-      </p>
-
-      <form @submit.prevent="saveConnections" class="settings-form">
-        <fieldset v-for="svc in [
-          {key:'jellyfin', label:'Jellyfin', required:true, hint:'Required — reaparr needs Jellyfin for watch state and activity log.'},
-          {key:'radarr', label:'Radarr', required:false, hint:'Optional — leave blank for a TV-only deployment. At least one of Radarr/Sonarr must be configured.'},
-          {key:'sonarr', label:'Sonarr', required:false, hint:'Optional — leave blank for a movies-only deployment. At least one of Radarr/Sonarr must be configured.'},
-          {key:'seerr', label:'Seerr', required:false, hint:'Optional — when set, reaparr also cleans up stale Seerr requests for already-deleted titles.'},
-        ]" :key="svc.key">
-          <legend>{{ svc.label }}</legend>
-          <p class="hint">{{ svc.hint }}</p>
-
-          <div class="field-row">
-            <label>URL</label>
-            <div v-if="connections.env_managed[svc.key + '.url']" class="locked-field">
-              <div class="locked-field-row">
-                <span class="mono">{{ connections.values[svc.key].url }}</span>
-                <span class="lock-badge">
-                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
-                </span>
-              </div>
-              <span class="locked-caption">Managed by <code>{{ connections.env_managed[svc.key + '.url'] }}</code></span>
+    <div class="stack with-bar" v-if="tab === 'connections'">
+      <section class="card" v-for="svc in services" :key="svc.id" :style="{ '--hue': svc.hue }" :class="connState(svc.id).status">
+        <div class="accent"></div>
+        <div class="card-head">
+          <div class="card-icon">{{ svc.name.charAt(0) }}</div>
+          <div class="card-text">
+            <div class="name-row">
+              <h2>{{ svc.name }}</h2>
+              <span class="req-badge" :class="{ required: svc.required }">{{ svc.required ? 'Required' : 'Optional' }}</span>
             </div>
-            <input v-else type="text" v-model="connections.values[svc.key].url">
+            <p>{{ svc.desc }}</p>
           </div>
-
-          <div class="field-row">
-            <label>API key</label>
-            <div v-if="connections.env_managed[svc.key + '.api_key']" class="locked-field">
-              <div class="locked-field-row">
-                <span class="mono">{{ connections.values[svc.key].api_key || '(not set)' }}</span>
-                <span class="lock-badge">
-                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
-                </span>
-              </div>
-              <span class="locked-caption">Managed by <code>{{ connections.env_managed[svc.key + '.api_key'] }}</code></span>
-            </div>
-            <input v-else type="password" v-model="connectionKeyInputs[svc.key]"
-                   :placeholder="connections.values[svc.key].api_key_set ? connections.values[svc.key].api_key : 'Not set'">
-          </div>
-
-          <div class="settings-submit-row">
-            <button type="button" class="btn-secondary" @click="testConnection(svc.key)" :disabled="testingService === svc.key">
-              {{ testingService === svc.key ? 'Testing…' : 'Test connection' }}
-            </button>
-            <span class="success-box" v-if="testResults[svc.key] === true">Connected.</span>
-            <span class="error-box" v-if="typeof testResults[svc.key] === 'string'">{{ testResults[svc.key] }}</span>
-          </div>
-        </fieldset>
-
-        <p class="error-box" v-if="connectionsError">{{ connectionsError }}</p>
-        <div class="settings-submit-row">
-          <button type="submit">Save connections</button>
-          <span class="success-box" v-if="connectionsSaved">Connections saved. Applied on the next sweep.</span>
+          <div class="conn-pill" :class="connState(svc.id).status"><span class="dot"></span>{{ connPillLabel(svc.id) }}</div>
         </div>
-      </form>
+        <div class="card-grid conn">
+          <label class="field">
+            <span class="field-label">URL
+              <span class="lock-label" v-if="connections.env_managed[svc.id + '.url']"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ connections.env_managed[svc.id + '.url'] }}</span>
+            </span>
+            <input class="input" v-model="connections.values[svc.id].url" :readonly="connections.env_managed[svc.id + '.url'] ? true : null" @input="connEdited(svc.id)">
+          </label>
+          <label class="field">
+            <span class="field-label">API key
+              <span class="lock-label" v-if="connections.env_managed[svc.id + '.api_key']"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ connections.env_managed[svc.id + '.api_key'] }}</span>
+            </span>
+            <input class="input" type="password" v-if="!connections.env_managed[svc.id + '.api_key']" v-model="connectionKeyInputs[svc.id]" @input="connEdited(svc.id)"
+                   :placeholder="connections.values[svc.id].api_key_set ? connections.values[svc.id].api_key : 'Not set'">
+            <input class="input" v-else readonly :value="connections.values[svc.id].api_key || '(not set)'">
+          </label>
+        </div>
+        <div class="card-foot">
+          <button class="btn btn-test" @click="testConnection(svc.id)" :disabled="connState(svc.id).status === 'testing'">
+            <span class="spinner" v-if="connState(svc.id).status === 'testing'"></span>
+            {{ connState(svc.id).status === 'testing' ? 'Testing…' : 'Test connection' }}
+          </button>
+          <span class="msg" :class="connState(svc.id).status">{{ connMessage(svc.id) }}</span>
+        </div>
+      </section>
+
+      <div class="save-bar" :class="connectionsBar.cls">
+        <span class="msg"><span class="dot"></span>{{ connectionsBar.msg }}</span>
+        <button class="btn btn-ghost" @click="discardConnections" :disabled="!connectionsDirty">Discard</button>
+        <button class="btn btn-primary" @click="saveConnections" :disabled="!connectionsDirty">Save connections</button>
+      </div>
     </div>
   </main>
 </div>

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -34,17 +35,21 @@ type Sweeper interface {
 	// MissingServices lists the required services that aren't configured;
 	// while non-empty, the sweep refuses to run.
 	MissingServices() []string
-	// DeleteAll re-checks everything live and deletes whatever is due right
-	// now — a manual sweep, available whether or not the daemon is enabled.
-	DeleteAll() (DeleteAllResult, error)
+	// DeleteSelected re-checks every candidate live and deletes the given
+	// IDs among them, regardless of grace period or whether the daemon is
+	// enabled.
+	DeleteSelected(ids []string) (DeleteResult, error)
 	// DaemonEnabled reports whether the scheduled sweep is enabled.
 	DaemonEnabled() bool
+	// NextRun is when the next scheduled sweep fires (if the daemon is
+	// enabled).
+	NextRun() time.Time
 	// RefreshPreview rebuilds the cached due list from live data now.
 	RefreshPreview()
 }
 
-// DeleteAllResult summarises a manual delete-all run.
-type DeleteAllResult struct {
+// DeleteResult summarises a manual multi-item delete.
+type DeleteResult struct {
 	Deleted int `json:"deleted"`
 	Skipped int `json:"skipped"` // due, but no radarr/sonarr match
 	Failed  int `json:"failed"`
@@ -58,6 +63,8 @@ type DueItem struct {
 	Kind        string `json:"kind"` // "movie" or "season"
 	GracePeriod string `json:"grace_period"`
 	StoppedAt   string `json:"stopped_at"` // RFC3339; for a season, its latest episode stop
+	DueAt       string `json:"due_at"`     // RFC3339; stopped_at + grace period
+	Due         bool   `json:"due"`        // past its grace period; false => still waiting
 	Resolved    bool   `json:"resolved"`   // false => can't be deleted; Reason says why
 	Reason      string `json:"reason,omitempty"`
 }
@@ -108,7 +115,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/connections/test", s.handleTestConnection)
 	mux.HandleFunc("/api/due", s.handleDue)
 	mux.HandleFunc("/api/due/delete", s.handleDeleteDue)
-	mux.HandleFunc("/api/due/delete-all", s.handleDeleteAll)
+	mux.HandleFunc("/api/due/delete-selected", s.handleDeleteSelected)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -126,20 +133,34 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if missing == nil {
 		missing = []string{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	status := map[string]any{
 		"missing_services": missing,
 		"daemon_enabled":   s.sweeper.DaemonEnabled(),
-	})
+	}
+	if s.sweeper.DaemonEnabled() {
+		status["next_run"] = s.sweeper.NextRun().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
-// handleDeleteAll runs a manual sweep: everything due right now (re-checked
-// live, not taken from the cached list) is deleted.
-func (s *Server) handleDeleteAll(w http.ResponseWriter, r *http.Request) {
+// handleDeleteSelected deletes the given IDs (each re-checked live).
+func (s *Server) handleDeleteSelected(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	result, err := s.sweeper.DeleteAll()
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ids is required"})
+		return
+	}
+	result, err := s.sweeper.DeleteSelected(req.IDs)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

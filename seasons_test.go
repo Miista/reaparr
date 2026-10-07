@@ -276,3 +276,62 @@ func TestSeason_SonarrUnsafe_ListedWithReason(t *testing.T) {
 		t.Fatalf("due = %+v, want one unresolved row with a reason", due)
 	}
 }
+
+// A fully watched season still within its grace period is listed for the
+// dashboard (due=false) but never returned by findDue, so nothing deletes it.
+func TestSeason_WithinGrace_IsCandidateButNotDue(t *testing.T) {
+	sonarr, srv := newFakeSonarr(t, season1())
+	sw := newSeasonSweeper(t,
+		map[string][]jellyfinItem{"u1": {playedEpisode("e1", 1, 1), playedEpisode("e2", 1, 2)}},
+		[]jellyfinActivityEntry{stopped("e2", 2*time.Hour)}, // grace is 24h
+		srv)
+
+	candidates, err := sw.findCandidates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].due || !candidates[0].resolved {
+		t.Fatalf("candidates = %+v, want one resolved, not-yet-due season", candidates)
+	}
+	if due, _ := sw.findDue(); len(due) != 0 {
+		t.Fatalf("findDue returned a season still within grace: %+v", due)
+	}
+	sw.sweepOnce()
+	if len(sonarr.deletedFileIDs) != 0 {
+		t.Fatalf("deleted %v from a season still within grace", sonarr.deletedFileIDs)
+	}
+}
+
+// A partially watched season isn't a candidate at all — not even "waiting".
+func TestSeason_PartiallyWatched_IsNotCandidate(t *testing.T) {
+	_, srv := newFakeSonarr(t, season1())
+	sw := newSeasonSweeper(t,
+		map[string][]jellyfinItem{"u1": {playedEpisode("e1", 1, 1)}},
+		[]jellyfinActivityEntry{stopped("e1", 2*time.Hour)},
+		srv)
+
+	if candidates, _ := sw.findCandidates(); len(candidates) != 0 {
+		t.Fatalf("partially watched season listed: %+v", candidates)
+	}
+}
+
+// A manual delete ignores the grace period: findOneCandidate finds a fully
+// watched season that stopped playing minutes ago, and deleting it works.
+func TestManualDelete_IgnoresGracePeriod(t *testing.T) {
+	sonarr, srv := newFakeSonarr(t, season1())
+	sw := newSeasonSweeper(t,
+		map[string][]jellyfinItem{"u1": {playedEpisode("e1", 1, 1), playedEpisode("e2", 1, 2)}},
+		[]jellyfinActivityEntry{stopped("e2", 5*time.Minute)}, // grace is 24h
+		srv)
+
+	d, ok, err := sw.findOneCandidate(seasonItemID("jf-series-1", 1))
+	if err != nil || !ok {
+		t.Fatalf("findOneCandidate = ok %v, err %v; want the in-grace season", ok, err)
+	}
+	if err := sw.deleteDueItem(d); err != nil {
+		t.Fatal(err)
+	}
+	if len(sonarr.deletedFileIDs) != 2 {
+		t.Fatalf("deleted %v, want both episode files", sonarr.deletedFileIDs)
+	}
+}

@@ -123,7 +123,7 @@ func (s *sweeper) deleteAllDue(due []dueItem) (cleaned, skipped, failed int) {
 
 	for _, d := range due {
 		if !d.resolved {
-			s.log.Warn().Msg(fmt.Sprintf("'%s' is watched and past its grace period, but can't be deleted (%s) — skipping", d.title, d.reason))
+			s.log.Warn().Msg(fmt.Sprintf("'%s' is watched, but can't be deleted (%s) — skipping", d.title, d.reason))
 			skipped++
 			continue
 		}
@@ -141,31 +141,50 @@ func (s *sweeper) deleteAllDue(due []dueItem) (cleaned, skipped, failed int) {
 	return cleaned, skipped, failed
 }
 
-// dueItem is one movie or one season that is watched and past its grace
-// period, together with whatever Radarr/Sonarr resolution was possible for
-// it. resolved=false means it could not be matched into Radarr/Sonarr
-// (hardlink-unsafe, a failed lookup, or simply untracked there) — reason
-// says which, for the log and the dashboard.
+// dueItem is one watched movie or one fully watched season, together with
+// whatever Radarr/Sonarr resolution was possible for it. due=false means
+// it's still within its grace period (shown on the dashboard as waiting,
+// never deleted). resolved=false means it could not be matched into
+// Radarr/Sonarr (hardlink-unsafe, a failed lookup, or simply untracked
+// there) — reason says which, for the log and the dashboard.
 type dueItem struct {
 	id          string // Jellyfin item ID for a movie; seasonItemID for a season
 	title       string
 	kind        mediaKind
 	gracePeriod time.Duration
 	stoppedAt   time.Time
+	due         bool // past its grace period
 	resolved    bool
 	reason      string        // set when resolved=false
 	movie       radarrMovie   // kind=movie, resolved
 	season      *seasonTarget // kind=season, resolved
 }
 
-// findDue performs the full "what's due for deletion" computation — the
-// intersection of currently-played items (set B) and old-enough stop events
-// (set A), each resolved against Radarr/Sonarr — without deleting anything.
-// This is the single source of truth for "what is due": the cron sweep
-// (sweepOnce), the HTTP preview endpoint, and a single-item re-verify
-// before a manual delete (see evaluateItem, reused by all three) share this
-// one matching algorithm, never two that could silently disagree.
+// findDue returns only what is past its grace period — what the scheduled
+// sweep acts on. Manual deletes use findCandidates (no grace period).
 func (s *sweeper) findDue() ([]dueItem, error) {
+	candidates, err := s.findCandidates()
+	if err != nil {
+		return nil, err
+	}
+	var due []dueItem
+	for _, d := range candidates {
+		if d.due {
+			due = append(due, d)
+		}
+	}
+	return due, nil
+}
+
+// findCandidates performs the full matching computation — the intersection
+// of currently-played items (set B) and their stop events (set A), each
+// resolved against Radarr/Sonarr — without deleting anything. It returns
+// every watched movie and fully watched season, whether or not its grace
+// period has passed (due says which), so the dashboard can show what's
+// waiting as well as what's due. This is the single source of truth: the
+// cron sweep, the dashboard preview, and a re-verify before a manual delete
+// all go through it, never two algorithms that could silently disagree.
+func (s *sweeper) findCandidates() ([]dueItem, error) {
 	safety := s.checkHardlinkSafety()
 
 	latestStop, err := s.jellyfin.latestStopEvents()
@@ -206,24 +225,27 @@ func (s *sweeper) findDue() ([]dueItem, error) {
 	return due, nil
 }
 
-// findOneDue re-verifies, right now, whether a single movie or season is
-// currently due for deletion — used by a manual delete request so it acts
-// on freshly-confirmed reality rather than a possibly-stale cached list the
-// dashboard is displaying (see liveSweeper.cachedDue in adapter.go). It
-// runs the full findDue and picks the requested row, so there is only one
-// matching algorithm — a season's eligibility depends on all its episodes,
-// so it can't be re-checked in isolation anyway.
+// findOneCandidate re-verifies, right now, whether a single movie or
+// season is still a deletion candidate — used by a manual delete request so
+// it acts on freshly-confirmed reality rather than a possibly-stale cached
+// list the dashboard is displaying (see liveSweeper.cachedDue in
+// adapter.go). The grace period does NOT apply here: it only governs the
+// scheduled sweep, while a manual delete may act on anything watched. It
+// runs the full findCandidates and picks the requested row, so there is
+// only one matching algorithm — a season's eligibility depends on all its
+// episodes, so it can't be re-checked in isolation anyway.
 //
-// ok=false means the item is not currently due — it got unplayed since the
-// cached list was built, or is still within its grace period. That is
-// reported to the caller as "nothing to delete", not as an error: a cache
-// that's gone stale in the user's favor is the whole point of re-verifying.
-func (s *sweeper) findOneDue(id string) (dueItem, bool, error) {
-	due, err := s.findDue()
+// ok=false means the item is no longer a candidate — it got unplayed (or a
+// season is no longer fully watched) since the cached list was built. That
+// is reported to the caller as "nothing to delete", not as an error: a
+// cache that's gone stale in the user's favor is the whole point of
+// re-verifying.
+func (s *sweeper) findOneCandidate(id string) (dueItem, bool, error) {
+	candidates, err := s.findCandidates()
 	if err != nil {
 		return dueItem{}, false, err
 	}
-	for _, d := range due {
+	for _, d := range candidates {
 		if d.id == id {
 			return d, true, nil
 		}
@@ -231,19 +253,13 @@ func (s *sweeper) findOneDue(id string) (dueItem, bool, error) {
 	return dueItem{}, false, nil
 }
 
-// evaluateMovie is the per-movie core of findDue's matching algorithm.
-// ok=false means this movie doesn't belong in the due set right now (no
-// stop event yet, or still within its grace period) — logged at debug
-// level since it's the common, expected case for most of the library.
+// evaluateMovie is the per-movie core of findCandidates' matching
+// algorithm. ok=false means this movie isn't a candidate at all (no stop
+// event yet, or Radarr isn't configured); a movie still within its grace
+// period is a candidate with due=false.
 func (s *sweeper) evaluateMovie(item jellyfinItem, stoppedAt time.Time, stopped bool, now time.Time, safety hardlinkSafety) (dueItem, bool) {
 	if !stopped {
 		s.log.Debug().Msg(fmt.Sprintf("'%s' is played but has no stop event in jellyfin's activity log, skipping", item.Name))
-		return dueItem{}, false
-	}
-
-	gracePeriod := s.gracePeriodFor(item)
-	if !stoppedAt.Before(now.Add(-gracePeriod)) {
-		s.log.Debug().Msg(fmt.Sprintf("'%s' stopped playing %s, still within its %s grace period", item.Name, stoppedAt.Local().Format("2006-01-02 15:04"), gracePeriod))
 		return dueItem{}, false
 	}
 
@@ -252,12 +268,20 @@ func (s *sweeper) evaluateMovie(item jellyfinItem, stoppedAt time.Time, stopped 
 		return dueItem{}, false
 	}
 
-	s.log.Info().Msg(fmt.Sprintf("'%s' is watched and past its %s grace period (stopped playing %s)", item.Name, gracePeriod, stoppedAt.Local().Format("2006-01-02 15:04")))
-
+	gracePeriod := s.gracePeriodFor(item)
 	d := dueItem{id: item.ID, title: item.Name, kind: kindMovie, gracePeriod: gracePeriod, stoppedAt: stoppedAt}
+	d.due = stoppedAt.Before(now.Add(-gracePeriod))
+	if d.due {
+		s.log.Info().Msg(fmt.Sprintf("'%s' is watched and past its %s grace period (stopped playing %s)", item.Name, gracePeriod, stoppedAt.Local().Format("2006-01-02 15:04")))
+	} else {
+		s.log.Debug().Msg(fmt.Sprintf("'%s' stopped playing %s, still within its %s grace period", item.Name, stoppedAt.Local().Format("2006-01-02 15:04"), gracePeriod))
+	}
+
 	movie, reason := s.resolveMovie(item, safety)
 	if reason != "" {
-		s.log.Warn().Msg(fmt.Sprintf("'%s' can't be matched to radarr: %s", item.Name, reason))
+		if d.due {
+			s.log.Warn().Msg(fmt.Sprintf("'%s' can't be matched to radarr: %s", item.Name, reason))
+		}
 		d.reason = reason
 		return d, true
 	}

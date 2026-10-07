@@ -125,11 +125,12 @@ func (l *sonarrLookups) seasonEpisodes(seriesID, season int) ([]sonarrEpisode, e
 	return out, nil
 }
 
-// evaluateSeason decides whether one season is ripe for deletion. ok=false
-// means it doesn't belong in the due set (not fully watched/aired/
-// downloaded, within its grace period, or Sonarr isn't configured at all).
-// A row that IS reported but can't be acted on carries resolved=false and a
-// reason (unsafe hardlinks, a lookup failure, or untracked in Sonarr).
+// evaluateSeason decides whether one season is a deletion candidate.
+// ok=false means it isn't (not fully watched/aired/downloaded, no stop
+// event, or Sonarr isn't configured at all). A candidate still within its
+// grace period has due=false. A row that can't be acted on carries
+// resolved=false and a reason (unsafe hardlinks, a lookup failure, or
+// untracked in Sonarr).
 func (s *sweeper) evaluateSeason(g *seasonGroup, now time.Time, safety hardlinkSafety, lookups *sonarrLookups) (dueItem, bool) {
 	title := fmt.Sprintf("%s — Season %d", g.seriesName, g.season)
 
@@ -141,20 +142,18 @@ func (s *sweeper) evaluateSeason(g *seasonGroup, now time.Time, safety hardlinkS
 		s.log.Debug().Msg(fmt.Sprintf("'%s' has played episodes but no stop event in jellyfin's activity log, skipping", title))
 		return dueItem{}, false
 	}
-	if !g.stoppedAt.Before(now.Add(-s.tvGracePeriod)) {
-		s.log.Debug().Msg(fmt.Sprintf("'%s' last stopped playing %s, still within its %s grace period", title, g.stoppedAt.Local().Format("2006-01-02 15:04"), s.tvGracePeriod))
-		return dueItem{}, false
-	}
-
 	d := dueItem{
 		id:          seasonItemID(g.jellyfinSeriesID, g.season),
 		title:       title,
 		kind:        kindSeason,
 		gracePeriod: s.tvGracePeriod,
 		stoppedAt:   g.stoppedAt,
+		due:         g.stoppedAt.Before(now.Add(-s.tvGracePeriod)),
 	}
 	unresolved := func(reason string) (dueItem, bool) {
-		s.log.Warn().Msg(fmt.Sprintf("'%s' can't be checked against sonarr: %s", title, reason))
+		if d.due {
+			s.log.Warn().Msg(fmt.Sprintf("'%s' can't be checked against sonarr: %s", title, reason))
+		}
 		d.reason = reason
 		return d, true
 	}
@@ -205,7 +204,11 @@ func (s *sweeper) evaluateSeason(g *seasonGroup, now time.Time, safety hardlinkS
 		}
 	}
 
-	s.log.Info().Msg(fmt.Sprintf("'%s' is fully watched and past its %s grace period (last stopped playing %s)", title, s.tvGracePeriod, g.stoppedAt.Local().Format("2006-01-02 15:04")))
+	if d.due {
+		s.log.Info().Msg(fmt.Sprintf("'%s' is fully watched and past its %s grace period (last stopped playing %s)", title, s.tvGracePeriod, g.stoppedAt.Local().Format("2006-01-02 15:04")))
+	} else {
+		s.log.Debug().Msg(fmt.Sprintf("'%s' is fully watched, last stopped playing %s, still within its %s grace period", title, g.stoppedAt.Local().Format("2006-01-02 15:04"), s.tvGracePeriod))
+	}
 	d.resolved = true
 	d.season = target
 	return d, true
