@@ -17,7 +17,9 @@ package main
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
@@ -39,10 +41,12 @@ import (
 // range.
 const addr = ":8767"
 
-// staticDir is where the Dockerfile copies the dashboard assets — see
-// internal main's noCache comment in automouse for why this isn't a build
-// step away from the plain source tree.
-const staticDir = "web/static"
+// staticFiles is the dashboard (HTML, JS, CSS, fonts, icon), compiled into
+// the binary so reaparr ships as a single file with nothing to copy
+// alongside it.
+//
+//go:embed web/static
+var staticFiles embed.FS
 
 // dataDir is where config.json is persisted inside the container — mount a
 // volume here to keep dashboard-entered settings across restarts.
@@ -81,7 +85,11 @@ func main() {
 	apiServer := api.New(st, live, tester, reloadAndRefresh, logger)
 	mux := http.NewServeMux()
 	apiServer.Routes(mux)
-	mux.Handle("/", noCache(http.FileServer(http.Dir(staticDir))))
+	static, err := fs.Sub(staticFiles, "web/static")
+	if err != nil {
+		logger.Fatal().Err(err).Msg("embedded dashboard assets missing")
+	}
+	mux.Handle("/", noCache(http.FileServer(http.FS(static))))
 
 	httpServer := &http.Server{
 		Addr:              addr,
