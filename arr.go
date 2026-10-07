@@ -28,19 +28,23 @@ type arrClient struct {
 // item ID is meaningless to Radarr/Sonarr, but tmdbId/tvdbId are shared
 // across all three systems.
 type radarrMovie struct {
-	ID     int    `json:"id"`
-	Title  string `json:"title"`
-	TmdbID int    `json:"tmdbId"`
-	Year   int    `json:"year"`
-	Tags   []int  `json:"tags"`
+	ID      int    `json:"id"`
+	Title   string `json:"title"`
+	TmdbID  int    `json:"tmdbId"`
+	Year    int    `json:"year"`
+	Tags    []int  `json:"tags"`
+	HasFile bool   `json:"hasFile"` // downloaded, not just tracked/wanted
 }
 
 type sonarrSeries struct {
-	ID     int    `json:"id"`
-	Title  string `json:"title"`
-	TvdbID int    `json:"tvdbId"`
-	Year   int    `json:"year"`
-	Tags   []int  `json:"tags"`
+	ID         int    `json:"id"`
+	Title      string `json:"title"`
+	TvdbID     int    `json:"tvdbId"`
+	Year       int    `json:"year"`
+	Tags       []int  `json:"tags"`
+	Statistics struct {
+		EpisodeFileCount int `json:"episodeFileCount"`
+	} `json:"statistics"`
 }
 
 // hasRadarr/hasSonarr report whether each service was actually configured —

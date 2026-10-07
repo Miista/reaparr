@@ -138,8 +138,10 @@ type libraryItem struct {
 	watch string
 }
 
-// libraryItems lists every movie and series in Radarr/Sonarr, live — the
-// dashboard's Library tab, where anything can be kept before it's watched.
+// libraryItems lists every movie and series in Radarr/Sonarr that's
+// actually available (has a file on disk — not merely tracked or wanted),
+// live — the dashboard's Library tab, where anything can be kept before
+// it's watched.
 func (s *sweeper) libraryItems() ([]libraryItem, error) {
 	tags, err := s.resolveKeepTags()
 	if err != nil {
@@ -152,6 +154,9 @@ func (s *sweeper) libraryItems() ([]libraryItem, error) {
 			return nil, fmt.Errorf("reading radarr's movies: %w", err)
 		}
 		for _, m := range movies {
+			if !m.HasFile {
+				continue
+			}
 			out = append(out, libraryItem{service: serviceRadarr, id: m.ID, title: m.Title, year: m.Year, kept: hasTag(m.Tags, tags.radarr)})
 		}
 	}
@@ -161,6 +166,9 @@ func (s *sweeper) libraryItems() ([]libraryItem, error) {
 			return nil, fmt.Errorf("reading sonarr's series: %w", err)
 		}
 		for _, sr := range series {
+			if sr.Statistics.EpisodeFileCount == 0 {
+				continue
+			}
 			out = append(out, libraryItem{service: serviceSonarr, id: sr.ID, title: sr.Title, year: sr.Year, kept: hasTag(sr.Tags, tags.sonarr)})
 		}
 	}

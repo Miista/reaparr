@@ -61,7 +61,10 @@ func newFakeSonarr(t *testing.T, episodes []sonarrEpisode) (*fakeSonarr, *httpte
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v3/series/editor":
 			json.NewDecoder(r.Body).Decode(&f.editorBody)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series":
-			json.NewEncoder(w).Encode([]sonarrSeries{{ID: 7, Title: "Some Show", TvdbID: 410092, Tags: f.seriesTags}})
+			json.NewEncoder(w).Encode([]map[string]any{{
+				"id": 7, "title": "Some Show", "tvdbId": 410092, "tags": f.seriesTags,
+				"statistics": map[string]int{"episodeFileCount": 2},
+			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/episode":
 			json.NewEncoder(w).Encode(episodes)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v3/episode/monitor":
@@ -485,5 +488,32 @@ func TestLibrary_ListsKeptAndUnkeeps(t *testing.T) {
 	}
 	if sonarr.editorBody["applyTags"] != "remove" || sonarr.editorBody["tags"].([]any)[0] != float64(5) {
 		t.Fatalf("editor body = %v, want tag 5 removed", sonarr.editorBody)
+	}
+}
+
+// The library only lists media that's actually on disk: a movie Radarr
+// tracks but hasn't downloaded is left out.
+func TestLibrary_OnlyDownloadedMovies(t *testing.T) {
+	srv := httptest.NewServer(withNoTags(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v3/movie" {
+			w.Write([]byte(`[{"id":1,"title":"On Disk","hasFile":true},{"id":2,"title":"Wanted","hasFile":false}]`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	sw := &sweeper{
+		jellyfin: newFakeJellyfin(t, fakeJellyfinConfig{}),
+		arr:      &arrClient{radarrURL: srv.URL, radarrAPIKey: "k", httpClient: srv.Client(), log: testLogger(t)},
+		keepTag:  "reaparr-keep",
+		log:      testLogger(t),
+	}
+
+	items, err := sw.libraryItems()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].title != "On Disk" {
+		t.Fatalf("library = %+v, want only the downloaded movie", items)
 	}
 }
