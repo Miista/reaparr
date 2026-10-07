@@ -131,21 +131,23 @@ rejects any attempt to change it. A field with no env var set is editable
 from the dashboard and persisted to Reaparr's data directory, surviving a
 container restart.
 
+Every env var is named `REAPARR_SETTING_<KEY>`, where `<KEY>` is the
+setting's key upper-cased, with `.` replaced by `_`.
+
 | Variable | Default | Description |
 |---|---|---|
-| `JELLYFIN_URL` | `http://jellyfin:8096` | Jellyfin base URL |
-| `JELLYFIN_API_KEY` | — | Jellyfin API key. Required for sweeps to run (see "Requirements"), but not at container startup |
-| `RADARR_URL` | `http://radarr:7878` | Radarr base URL |
-| `RADARR_API_KEY` | — | Radarr API key. At least one of `RADARR_API_KEY`/`SONARR_API_KEY` is needed; either alone is enough for a movies-only or TV-only setup |
-| `SONARR_URL` | `http://sonarr:8989` | Sonarr base URL |
-| `SONARR_API_KEY` | — | Sonarr API key. See `RADARR_API_KEY` above |
-| `DELETE_MOVIES_AFTER` | `7d` | How long after the last `VideoPlaybackStopped` event a still-played movie must wait before deletion (the grace period — see below) |
-| `DELETE_TV_SHOWS_AFTER` | `7d` | Same, for TV episodes — configured independently of `DELETE_MOVIES_AFTER`, e.g. a shorter grace period for movies (single-sitting watches) and a longer one for TV (a season pack might sit half-watched between episodes for a while) |
-| `POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
-| `SEERR_URL` | `http://seerr:5055` | Seerr base URL — see "Seerr cleanup" above |
-| `SEERR_API_KEY` | — | Seerr API key. Required for sweeps to run |
-| `REAPARR_DATA_DIR` | `/app/data` | Where Reaparr persists dashboard-entered settings/connections (`config.json`) |
+| `REAPARR_SETTING_JELLYFIN_URL` | `http://jellyfin:8096` | Jellyfin base URL |
+| `REAPARR_SETTING_JELLYFIN_API_KEY` | — | Jellyfin API key. Required for sweeps to run (see "Requirements"), but not at container startup |
+| `REAPARR_SETTING_RADARR_URL` | `http://radarr:7878` | Radarr base URL |
+| `REAPARR_SETTING_RADARR_API_KEY` | — | Radarr API key. At least one of Radarr/Sonarr is needed; either alone is enough for a movies-only or TV-only setup |
+| `REAPARR_SETTING_SONARR_URL` | `http://sonarr:8989` | Sonarr base URL |
+| `REAPARR_SETTING_SONARR_API_KEY` | — | Sonarr API key. See the Radarr API key above |
+| `REAPARR_SETTING_SEERR_URL` | `http://seerr:5055` | Seerr base URL — see "Seerr cleanup" above |
+| `REAPARR_SETTING_SEERR_API_KEY` | — | Seerr API key. Required for sweeps to run |
+| `REAPARR_SETTING_MOVIES_GRACE_PERIOD` | `7d` | How long after the last `VideoPlaybackStopped` event a still-played movie must wait before deletion (the grace period — see below) |
+| `REAPARR_SETTING_TV_GRACE_PERIOD` | `7d` | Same, for TV episodes — configured independently of the movies grace period, e.g. a shorter one for movies (single-sitting watches) and a longer one for TV (a season pack might sit half-watched between episodes for a while) |
+| `REAPARR_SETTING_POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
+| `REAPARR_SETTING_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 
 Both grace-period variables accept Go duration strings (`45m`, `6h`, `168h`,
 `1h30m`) plus `d` (days) and `w` (weeks) suffixes — e.g. `7d`, `2w`.
@@ -164,7 +166,8 @@ present/absent flag or masked value is ever exposed.
 vars are only ever held in memory — they are never written to disk. A key
 entered in the dashboard, by contrast, is stored in plain text in
 `config.json` (file mode `0600`). You can mix the two freely, e.g. set
-`SEERR_URL` via env and enter only the Seerr API key in the dashboard.
+`REAPARR_SETTING_SEERR_URL` via env and enter only the Seerr API key in the
+dashboard.
 
 ## Dashboard
 
@@ -199,7 +202,7 @@ internet-facing reverse proxy until it is.
 
 Reaparr is a single static binary that both runs the scheduled sweep and
 serves the dashboard on port 8767. It persists dashboard-entered
-configuration under `/app/data` (see `REAPARR_DATA_DIR` above) — mount a
+configuration in `/app/data/config.json` (fixed path) — mount a
 volume there if you want settings entered via the dashboard to survive a
 container recreate (not just a restart, which the container's own
 filesystem already survives). It needs network access to Jellyfin and
@@ -215,15 +218,17 @@ reaparr:
   image: ghcr.io/miista/reaparr:latest
   restart: unless-stopped
   environment:
-    JELLYFIN_URL: http://jellyfin:8096
-    JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}
-    RADARR_URL: http://radarr:7878
-    RADARR_API_KEY: ${RADARR_API_KEY}
-    SONARR_URL: http://sonarr:8989
-    SONARR_API_KEY: ${SONARR_API_KEY}
-    DELETE_MOVIES_AFTER: 2d
-    DELETE_TV_SHOWS_AFTER: 7d
-    POLL_SCHEDULE: "@hourly"
+    REAPARR_SETTING_JELLYFIN_URL: http://jellyfin:8096
+    REAPARR_SETTING_JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}
+    REAPARR_SETTING_RADARR_URL: http://radarr:7878
+    REAPARR_SETTING_RADARR_API_KEY: ${RADARR_API_KEY}
+    REAPARR_SETTING_SONARR_URL: http://sonarr:8989
+    REAPARR_SETTING_SONARR_API_KEY: ${SONARR_API_KEY}
+    REAPARR_SETTING_SEERR_URL: http://seerr:5055
+    REAPARR_SETTING_SEERR_API_KEY: ${SEERR_API_KEY}
+    REAPARR_SETTING_MOVIES_GRACE_PERIOD: 2d
+    REAPARR_SETTING_TV_GRACE_PERIOD: 7d
+    REAPARR_SETTING_POLL_SCHEDULE: "@hourly"
   ports:
     - 8767:8767
   volumes:

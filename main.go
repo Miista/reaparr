@@ -43,9 +43,11 @@ const addr = ":8767"
 // step away from the plain source tree.
 const staticDir = "web/static"
 
-func main() {
-	dataDir := envOr("REAPARR_DATA_DIR", "/app/data")
+// dataDir is where config.json is persisted inside the container — mount a
+// volume here to keep dashboard-entered settings across restarts.
+const dataDir = "/app/data"
 
+func main() {
 	st, err := store.Open(dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to open state store: %v\n", err)

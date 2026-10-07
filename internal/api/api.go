@@ -205,7 +205,7 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	s.store.View(func(state store.State) { st = state })
 	resolved := settings.ResolveConnections(st.Connections)
 
-	url, apiKey := req.URL, req.APIKey
+	url, apiKey := strings.TrimSpace(req.URL), strings.TrimSpace(req.APIKey)
 	switch req.Service {
 	case "jellyfin":
 		if url == "" {
@@ -346,7 +346,9 @@ func applyConnectionsPatch(st *store.Connections, incoming map[string]any) {
 				// publicConnections' masking), so there is nothing a
 				// client could legitimately submit here to intentionally
 				// clear a key versus simply not having touched the field.
-				if v != "" {
+				// Trimmed: a pasted key with a stray space/newline would
+				// otherwise be rejected as unauthorized.
+				if v = strings.TrimSpace(v); v != "" {
 					conn.APIKey = v
 				}
 			}

@@ -84,7 +84,10 @@ func (c *jellyfinClient) get(path string, out any) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Emby-Token", c.apiKey)
+	// The Authorization scheme, not the legacy X-Emby-Token header: newer
+	// Jellyfin (12.x) rejects legacy auth by default, while this form has
+	// been accepted since 10.x.
+	req.Header.Set("Authorization", fmt.Sprintf(`MediaBrowser Token="%s"`, c.apiKey))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

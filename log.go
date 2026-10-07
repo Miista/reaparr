@@ -10,7 +10,7 @@ import (
 // newLogger builds the process-wide zerolog.Logger using ConsoleWriter —
 // the same colored, human-readable format used by diun elsewhere in this
 // stack ("TIME | LEVEL | message key=value ..."), rather than a raw
-// structured dump. Level is configurable via LOG_LEVEL since a
+// structured dump. Level is configurable (REAPARR_SETTING_LOG_LEVEL or the dashboard) since a
 // delete-capable tool needs to be able to turn up verbosity live without a
 // redeploy.
 //

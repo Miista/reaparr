@@ -50,30 +50,39 @@ func TestResolve_EnvVarWins(t *testing.T) {
 	}
 }
 
-// TestResolve_LegacyEnvVarNamesStillLock pins the exact regression found
-// manually against a running container: DELETE_MOVIES_AFTER (reaparr's
-// original, pre-dashboard env var) must keep locking the field — not just
-// seed its persisted value once — otherwise a POST to /api/settings could
-// silently overwrite an operator's env-pinned grace period.
-func TestResolve_LegacyEnvVarNamesStillLock(t *testing.T) {
+// Pre-dashboard env var names are no longer recognised — only
+// REAPARR_SETTING_<KEY> pins a field.
+func TestResolve_LegacyEnvVarNamesIgnored(t *testing.T) {
 	t.Setenv("DELETE_MOVIES_AFTER", "1d")
-	t.Setenv("DELETE_TV_SHOWS_AFTER", "14d")
 	t.Setenv("LOG_LEVEL", "warn")
-	t.Setenv("POLL_SCHEDULE", "@daily")
+	t.Setenv("JELLYFIN_API_KEY", "legacy-key")
 
-	got := Resolve(store.Settings{MoviesGracePeriod: "7d", TVGracePeriod: "7d", LogLevel: "info", PollSchedule: "@hourly"})
+	got := Resolve(store.Settings{MoviesGracePeriod: "7d", LogLevel: "info"})
+	if got.Settings.MoviesGracePeriod != "7d" || got.IsManaged("movies_grace_period") {
+		t.Error("DELETE_MOVIES_AFTER still pins movies_grace_period")
+	}
+	if got.Settings.LogLevel != "info" || got.IsManaged("log_level") {
+		t.Error("LOG_LEVEL still pins log_level")
+	}
 
-	if got.Settings.MoviesGracePeriod != "1d" {
-		t.Errorf("MoviesGracePeriod = %q, want env-pinned 1d", got.Settings.MoviesGracePeriod)
+	conns := ResolveConnections(store.Connections{})
+	if conns.Connections.Jellyfin.APIKey != "" || conns.IsManaged("jellyfin.api_key") {
+		t.Error("JELLYFIN_API_KEY still pins jellyfin.api_key")
 	}
-	if !got.IsManaged("movies_grace_period") {
-		t.Error("movies_grace_period not reported as env-managed via legacy DELETE_MOVIES_AFTER")
-	}
-	if got.Managed["movies_grace_period"] != "DELETE_MOVIES_AFTER" {
-		t.Errorf("Managed[movies_grace_period] = %q, want DELETE_MOVIES_AFTER", got.Managed["movies_grace_period"])
-	}
-	if !got.IsManaged("tv_grace_period") || !got.IsManaged("log_level") || !got.IsManaged("poll_schedule") {
-		t.Error("expected all four legacy-named env vars to lock their fields")
+}
+
+func TestEnvVar(t *testing.T) {
+	for key, want := range map[string]string{
+		"log_level":           "REAPARR_SETTING_LOG_LEVEL",
+		"poll_schedule":       "REAPARR_SETTING_POLL_SCHEDULE",
+		"movies_grace_period": "REAPARR_SETTING_MOVIES_GRACE_PERIOD",
+		"tv_grace_period":     "REAPARR_SETTING_TV_GRACE_PERIOD",
+		"jellyfin.url":        "REAPARR_SETTING_JELLYFIN_URL",
+		"seerr.api_key":       "REAPARR_SETTING_SEERR_API_KEY",
+	} {
+		if got := EnvVar(key); got != want {
+			t.Errorf("EnvVar(%q) = %q, want %q", key, got, want)
+		}
 	}
 }
 
@@ -103,8 +112,8 @@ func TestResolveConnections_NoEnvVars_ReturnsPersistedUnchanged(t *testing.T) {
 }
 
 func TestResolveConnections_EnvVarWins(t *testing.T) {
-	t.Setenv("JELLYFIN_URL", "http://jellyfin.internal:8096")
-	t.Setenv("JELLYFIN_API_KEY", "env-key")
+	t.Setenv("REAPARR_SETTING_JELLYFIN_URL", "http://jellyfin.internal:8096")
+	t.Setenv("REAPARR_SETTING_JELLYFIN_API_KEY", "env-key")
 
 	got := ResolveConnections(store.Connections{
 		Jellyfin: store.Connection{URL: "http://jellyfin:8096", APIKey: "persisted-key"},
@@ -131,7 +140,7 @@ func TestResolveConnections_EnvVarWins(t *testing.T) {
 // A URL pinned by env must not lock the API key: it stays editable and its
 // persisted value (entered in the dashboard) is used.
 func TestResolveConnections_EnvURLOnly_APIKeyFromStore(t *testing.T) {
-	t.Setenv("SEERR_URL", "http://seerr.internal:5055")
+	t.Setenv("REAPARR_SETTING_SEERR_URL", "http://seerr.internal:5055")
 
 	got := ResolveConnections(store.Connections{
 		Seerr: store.Connection{URL: "http://seerr:5055", APIKey: "ui-key"},
@@ -147,7 +156,7 @@ func TestResolveConnections_EnvURLOnly_APIKeyFromStore(t *testing.T) {
 		t.Error("seerr.url not reported as env-managed")
 	}
 	if got.IsManaged("seerr.api_key") {
-		t.Error("seerr.api_key reported as env-managed with only SEERR_URL set")
+		t.Error("seerr.api_key reported as env-managed with only REAPARR_SETTING_SEERR_URL set")
 	}
 }
 
