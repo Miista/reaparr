@@ -345,10 +345,6 @@ function App() {
       return `${it.service}:${it.id}`;
     },
 
-    get keptCount() {
-      return this.library.filter((it) => it.kept).length;
-    },
-
     get filteredLibrary() {
       const q = this.libraryQuery.trim().toLowerCase();
       return this.library.filter((it) => {
