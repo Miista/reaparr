@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reaparr</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app" v-scope="App()" @vue:mounted="mounted">
+
+  <header class="topbar">
+    <div class="brand">Reaparr</div>
+  </header>
+
+  <main>
+    <nav class="tabs">
+      <button :class="{active: tab === 'due'}" @click="tab = 'due'">Due for deletion</button>
+      <button :class="{active: tab === 'settings'}" @click="tab = 'settings'">Settings</button>
+      <button :class="{active: tab === 'connections'}" @click="tab = 'connections'">Connections</button>
+    </nav>
+
+    <!-- Due for deletion -->
+    <div v-if="tab === 'due'">
+      <div class="settings-submit-row" style="margin-bottom:16px;">
+        <button class="btn-secondary" @click="loadDue" :disabled="dueLoading">{{ dueLoading ? 'Refreshing…' : 'Refresh' }}</button>
+        <span class="dim" v-if="due.length">{{ due.length }} item(s) currently due</span>
+      </div>
+      <p class="error-box" v-if="dueError">{{ dueError }}</p>
+
+      <div class="table-scroll" v-if="due.length">
+        <table class="data-table">
+          <thead>
+            <tr><th>Title</th><th>Kind</th><th>Stopped playing</th><th>Grace period</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in due" :key="item.jellyfin_item_id">
+              <td>{{ item.title }}</td>
+              <td class="mono dim">{{ item.resolved ? item.kind : '—' }}</td>
+              <td class="mono dim">{{ formatTime(item.stopped_at) }}</td>
+              <td class="mono dim">{{ item.grace_period }}</td>
+              <td>
+                <span v-if="item.resolved">Ready to delete</span>
+                <span class="dim" v-else>Not found in Radarr/Sonarr</span>
+              </td>
+              <td>
+                <button class="btn-danger" :disabled="!item.resolved || deletingID === item.jellyfin_item_id"
+                        @click="deleteItem(item)">
+                  {{ deletingID === item.jellyfin_item_id ? 'Deleting…' : 'Delete now' }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else-if="!dueLoading && !dueError" class="dim">Nothing is currently due for deletion.</p>
+    </div>
+
+    <!-- Settings -->
+    <div v-if="tab === 'settings'">
+      <p class="dim">
+        Fields locked with <svg class="lock-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg> are pinned by an environment variable and cannot be changed here.
+      </p>
+
+      <form @submit.prevent="saveSettings" class="settings-form">
+        <fieldset>
+          <legend>Cleanup timing</legend>
+          <div class="field-row" v-for="f in [
+            {key:'movies_grace_period', label:'Delete movies after', hint: 'How long after a movie is fully watched before it is deleted. e.g. 7d, 36h, 2w.'},
+            {key:'tv_grace_period', label:'Delete TV episodes after', hint: 'How long after an episode is fully watched before its series is checked for deletion. e.g. 7d, 36h, 2w.'},
+          ]" :key="f.key">
+            <label>{{ f.label }}</label>
+            <div v-if="settings.env_managed[f.key]" class="locked-field">
+              <div class="locked-field-row">
+                <span class="mono">{{ settings.values[f.key] }}</span>
+                <span class="lock-badge">
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
+                </span>
+              </div>
+              <span class="locked-caption">Managed by <code>{{ settings.env_managed[f.key] }}</code></span>
+            </div>
+            <input v-else type="text" v-model="settings.values[f.key]" placeholder="7d">
+            <p class="hint">{{ f.hint }}</p>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Schedule &amp; logging</legend>
+          <div class="field-row">
+            <label>Poll schedule (cron expression)</label>
+            <div v-if="settings.env_managed.poll_schedule" class="locked-field">
+              <div class="locked-field-row">
+                <span class="mono">{{ settings.values.poll_schedule }}</span>
+                <span class="lock-badge">
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
+                </span>
+              </div>
+              <span class="locked-caption">Managed by <code>{{ settings.env_managed.poll_schedule }}</code></span>
+            </div>
+            <input v-else type="text" v-model="settings.values.poll_schedule" placeholder="@hourly">
+            <p class="hint">Standard cron expression or a descriptor like @hourly, @daily.</p>
+          </div>
+
+          <div class="field-row">
+            <label>Log level</label>
+            <div v-if="settings.env_managed.log_level" class="locked-field">
+              <div class="locked-field-row">
+                <span class="mono">{{ settings.values.log_level }}</span>
+                <span class="lock-badge">
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
+                </span>
+              </div>
+              <span class="locked-caption">Managed by <code>{{ settings.env_managed.log_level }}</code></span>
+            </div>
+            <select v-else v-model="settings.values.log_level">
+              <option value="debug">debug</option>
+              <option value="info">info</option>
+              <option value="warn">warn</option>
+              <option value="error">error</option>
+            </select>
+          </div>
+        </fieldset>
+
+        <p class="error-box" v-if="settingsError">{{ settingsError }}</p>
+        <div class="settings-submit-row">
+          <button type="submit">Save settings</button>
+          <span class="success-box" v-if="settingsSaved">Settings saved. Applied on the next sweep.</span>
+        </div>
+      </form>
+    </div>
+
+    <!-- Connections -->
+    <div v-if="tab === 'connections'">
+      <p class="dim">
+        Fields locked with <svg class="lock-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg> are pinned by an environment variable and cannot be changed here.
+      </p>
+
+      <form @submit.prevent="saveConnections" class="settings-form">
+        <fieldset v-for="svc in [
+          {key:'jellyfin', label:'Jellyfin', required:true, hint:'Required — reaparr needs Jellyfin for watch state and activity log.'},
+          {key:'radarr', label:'Radarr', required:false, hint:'Optional — leave blank for a TV-only deployment. At least one of Radarr/Sonarr must be configured.'},
+          {key:'sonarr', label:'Sonarr', required:false, hint:'Optional — leave blank for a movies-only deployment. At least one of Radarr/Sonarr must be configured.'},
+          {key:'seerr', label:'Seerr', required:false, hint:'Optional — when set, reaparr also cleans up stale Seerr requests for already-deleted titles.'},
+        ]" :key="svc.key">
+          <legend>{{ svc.label }}</legend>
+          <p class="hint">{{ svc.hint }}</p>
+
+          <div class="field-row">
+            <label>URL</label>
+            <div v-if="connections.env_managed[svc.key + '.url']" class="locked-field">
+              <div class="locked-field-row">
+                <span class="mono">{{ connections.values[svc.key].url }}</span>
+                <span class="lock-badge">
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
+                </span>
+              </div>
+              <span class="locked-caption">Managed by <code>{{ connections.env_managed[svc.key + '.url'] }}</code></span>
+            </div>
+            <input v-else type="text" v-model="connections.values[svc.key].url">
+          </div>
+
+          <div class="field-row">
+            <label>API key</label>
+            <div v-if="connections.env_managed[svc.key + '.api_key']" class="locked-field">
+              <div class="locked-field-row">
+                <span class="mono">{{ connections.values[svc.key].api_key || '(not set)' }}</span>
+                <span class="lock-badge">
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
+                </span>
+              </div>
+              <span class="locked-caption">Managed by <code>{{ connections.env_managed[svc.key + '.api_key'] }}</code></span>
+            </div>
+            <input v-else type="password" v-model="connectionKeyInputs[svc.key]"
+                   :placeholder="connections.values[svc.key].api_key_set ? connections.values[svc.key].api_key : 'Not set'">
+          </div>
+
+          <div class="settings-submit-row">
+            <button type="button" class="btn-secondary" @click="testConnection(svc.key)" :disabled="testingService === svc.key">
+              {{ testingService === svc.key ? 'Testing…' : 'Test connection' }}
+            </button>
+            <span class="success-box" v-if="testResults[svc.key] === true">Connected.</span>
+            <span class="error-box" v-if="typeof testResults[svc.key] === 'string'">{{ testResults[svc.key] }}</span>
+          </div>
+        </fieldset>
+
+        <p class="error-box" v-if="connectionsError">{{ connectionsError }}</p>
+        <div class="settings-submit-row">
+          <button type="submit">Save connections</button>
+          <span class="success-box" v-if="connectionsSaved">Connections saved. Applied on the next sweep.</span>
+        </div>
+      </form>
+    </div>
+  </main>
+</div>
+
+<script src="vendor/petite-vue.iife.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

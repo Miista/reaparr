@@ -6,5 +6,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /reaparr .
 
 FROM gcr.io/distroless/static-debian12
+WORKDIR /
 COPY --from=build /reaparr /reaparr
+COPY web/static /web/static
 ENTRYPOINT ["/reaparr"]

@@ -79,83 +79,193 @@ func (s *sweeper) run(ctx context.Context) {
 func (s *sweeper) sweepOnce() {
 	s.log.Info().Msg("starting a sweep")
 
-	safety := s.checkHardlinkSafety()
-
-	now := time.Now().UTC()
-	s.log.Debug().Msg(fmt.Sprintf("grace periods for this sweep: movies=%s, tv=%s", s.moviesGracePeriod, s.tvGracePeriod))
-
-	latestStop, err := s.jellyfin.latestStopEvents()
+	due, err := s.findDue()
 	if err != nil {
-		s.log.Error().Msg(fmt.Sprintf("could not read jellyfin's activity log this sweep, will try again next time: %v", err))
+		// findDue already logged the specific cause.
 		return
 	}
-	s.log.Debug().Msg(fmt.Sprintf("jellyfin's activity log mentions %d distinct items (played or not, recently stopped or long ago)", len(latestStop)))
 
-	playedItems, err := s.currentlyPlayedItems()
-	if err != nil {
-		s.log.Error().Msg(fmt.Sprintf("could not check jellyfin's current watched state this sweep, will try again next time: %v", err))
-		return
-	}
-	s.log.Debug().Msg(fmt.Sprintf("%d items are currently marked played by jellyfin", len(playedItems)))
+	s.deleteAllDue(due)
+}
 
-	var due []jellyfinItem
-	for _, item := range playedItems {
-		stoppedAt, stopped := latestStop[item.ID]
-		if !stopped {
-			s.log.Debug().Msg(fmt.Sprintf("'%s' is played but has no stop event in jellyfin's activity log, skipping", displayTitle(item)))
-			continue
-		}
-
-		gracePeriod := s.gracePeriodFor(item)
-		if !stoppedAt.Before(now.Add(-gracePeriod)) {
-			s.log.Debug().Msg(fmt.Sprintf("'%s' stopped playing %s, still within its %s grace period", displayTitle(item), stoppedAt.Local().Format("2006-01-02 15:04"), gracePeriod))
-			continue
-		}
-
-		s.log.Info().Msg(fmt.Sprintf("'%s' is watched and past its %s grace period (stopped playing %s) — will delete it now", displayTitle(item), gracePeriod, stoppedAt.Local().Format("2006-01-02 15:04")))
-		due = append(due, item)
-	}
-
+// deleteAllDue runs the delete pass over an already-computed due list —
+// split out from sweepOnce so a caller that needs the raw findDue result
+// for another purpose too (main.go's cron loop caches it for the
+// dashboard, see liveSweeper.updateCache) can compute it exactly once per
+// tick and hand the same slice to both, instead of scanning twice.
+func (s *sweeper) deleteAllDue(due []dueItem) {
 	if len(due) == 0 {
-		s.log.Info().Msg(fmt.Sprintf("sweep finished: nothing due for deletion (%d currently played)", len(playedItems)))
+		s.log.Info().Msg("sweep finished: nothing due for deletion")
 		s.cleanUpSeerr()
 		return
 	}
 
 	var cleaned, skipped, failed int
-	for _, item := range due {
-		resolved, ok, err := s.resolveToArr(item, safety)
-		if err != nil {
-			s.log.Error().Msg(fmt.Sprintf("could not look up '%s' in radarr/sonarr, will retry next sweep: %v", displayTitle(item), err))
-			failed++
-			continue
-		}
-		if !ok {
-			s.log.Warn().Msg(fmt.Sprintf("'%s' is watched and past its grace period, but radarr/sonarr doesn't know about it — nothing to delete, skipping", displayTitle(item)))
+	for _, d := range due {
+		if !d.resolved {
+			s.log.Warn().Msg(fmt.Sprintf("'%s' is watched and past its grace period, but radarr/sonarr doesn't know about it — nothing to delete, skipping", displayTitle(d.item)))
 			skipped++
 			continue
 		}
 
-		var deleteErr error
-		switch resolved.kind {
-		case kindMovie:
-			deleteErr = s.arr.deleteMovie(resolved.id)
-		case kindSeries:
-			deleteErr = s.arr.deleteSeries(resolved.id)
-		}
-		if deleteErr != nil {
-			s.log.Error().Msg(fmt.Sprintf("failed to delete '%s' (%s id %s), will retry next sweep: %v", resolved.title, resolved.kind, resolved.id, deleteErr))
+		if err := s.deleteDueItem(d); err != nil {
 			failed++
 			continue
 		}
-
-		s.log.Info().Msg(fmt.Sprintf("deleted '%s' (%s id %s)", resolved.title, resolved.kind, resolved.id))
 		cleaned++
 	}
 
 	s.log.Info().Msg(fmt.Sprintf("sweep finished: %d due, %d deleted, %d skipped, %d failed", len(due), cleaned, skipped, failed))
 
 	s.cleanUpSeerr()
+}
+
+// dueItem is one Jellyfin item that is both currently played and past its
+// grace period, together with whatever Radarr/Sonarr resolution was
+// possible for it. resolved=false means Jellyfin knows about this item but
+// it could not be matched into Radarr/Sonarr (not configured,
+// hardlink-unsafe, or simply untracked there) — a real, expected case, not
+// an error; see resolveToArr's doc comment.
+type dueItem struct {
+	item        jellyfinItem
+	gracePeriod time.Duration
+	stoppedAt   time.Time
+	resolved    bool
+	arrItem     resolvedArrItem
+}
+
+// findDue performs the full "what's due for deletion" computation — the
+// intersection of currently-played items (set B) and old-enough stop events
+// (set A), each resolved against Radarr/Sonarr — without deleting anything.
+// This is the single source of truth for "what is due": the cron sweep
+// (sweepOnce), the HTTP preview endpoint, and a single-item re-verify
+// before a manual delete (see evaluateItem, reused by all three) share this
+// one matching algorithm, never two that could silently disagree.
+func (s *sweeper) findDue() ([]dueItem, error) {
+	safety := s.checkHardlinkSafety()
+
+	latestStop, err := s.jellyfin.latestStopEvents()
+	if err != nil {
+		s.log.Error().Msg(fmt.Sprintf("could not read jellyfin's activity log this sweep, will try again next time: %v", err))
+		return nil, err
+	}
+	s.log.Debug().Msg(fmt.Sprintf("jellyfin's activity log mentions %d distinct items (played or not, recently stopped or long ago)", len(latestStop)))
+
+	playedItems, err := s.currentlyPlayedItems()
+	if err != nil {
+		s.log.Error().Msg(fmt.Sprintf("could not check jellyfin's current watched state this sweep, will try again next time: %v", err))
+		return nil, err
+	}
+	s.log.Debug().Msg(fmt.Sprintf("%d items are currently marked played by jellyfin", len(playedItems)))
+
+	now := time.Now().UTC()
+	s.log.Debug().Msg(fmt.Sprintf("grace periods for this sweep: movies=%s, tv=%s", s.moviesGracePeriod, s.tvGracePeriod))
+
+	var due []dueItem
+	for _, item := range playedItems {
+		stoppedAt, stopped := latestStop[item.ID]
+		if d, ok := s.evaluateItem(item, stoppedAt, stopped, now, safety); ok {
+			due = append(due, d)
+		}
+	}
+
+	return due, nil
+}
+
+// findOneDue re-verifies, right now, whether a single specific Jellyfin
+// item is currently due for deletion — used by a manual delete request so
+// it acts on freshly-confirmed reality rather than a possibly-stale cached
+// list the dashboard is displaying (see liveSweeper.cachedDue in
+// adapter.go). Calls the exact same evaluateItem helper findDue uses, just
+// scoped to one item instead of every currently-played one, so there is
+// still only one matching algorithm, not a second one for this path.
+//
+// ok=false means the item is not currently due — either it was never
+// played, got unplayed since the cached list was built, or is still within
+// its grace period. That is reported to the caller as "nothing to delete",
+// not as an error: a cache that's gone stale in the user's favor (the item
+// no longer qualifies) is the whole point of re-verifying, not a bug.
+func (s *sweeper) findOneDue(jellyfinItemID string) (dueItem, bool, error) {
+	safety := s.checkHardlinkSafety()
+
+	latestStop, err := s.jellyfin.latestStopEvents()
+	if err != nil {
+		s.log.Error().Msg(fmt.Sprintf("could not read jellyfin's activity log for a manual delete re-check, aborting: %v", err))
+		return dueItem{}, false, err
+	}
+
+	playedItems, err := s.currentlyPlayedItems()
+	if err != nil {
+		s.log.Error().Msg(fmt.Sprintf("could not check jellyfin's current watched state for a manual delete re-check, aborting: %v", err))
+		return dueItem{}, false, err
+	}
+
+	now := time.Now().UTC()
+	for _, item := range playedItems {
+		if item.ID != jellyfinItemID {
+			continue
+		}
+		stoppedAt, stopped := latestStop[item.ID]
+		d, ok := s.evaluateItem(item, stoppedAt, stopped, now, safety)
+		return d, ok, nil
+	}
+
+	return dueItem{}, false, nil
+}
+
+// evaluateItem is the per-item core of findDue's matching algorithm,
+// extracted so findOneDue can re-run it for a single item without
+// duplicating the logic by hand. ok=false means this item doesn't belong
+// in the due set right now (never played, no stop event yet, or still
+// within its grace period) — logged at debug level since it's the common,
+// expected case for most of the library, not a problem.
+func (s *sweeper) evaluateItem(item jellyfinItem, stoppedAt time.Time, stopped bool, now time.Time, safety hardlinkSafety) (dueItem, bool) {
+	if !stopped {
+		s.log.Debug().Msg(fmt.Sprintf("'%s' is played but has no stop event in jellyfin's activity log, skipping", displayTitle(item)))
+		return dueItem{}, false
+	}
+
+	gracePeriod := s.gracePeriodFor(item)
+	if !stoppedAt.Before(now.Add(-gracePeriod)) {
+		s.log.Debug().Msg(fmt.Sprintf("'%s' stopped playing %s, still within its %s grace period", displayTitle(item), stoppedAt.Local().Format("2006-01-02 15:04"), gracePeriod))
+		return dueItem{}, false
+	}
+
+	s.log.Info().Msg(fmt.Sprintf("'%s' is watched and past its %s grace period (stopped playing %s)", displayTitle(item), gracePeriod, stoppedAt.Local().Format("2006-01-02 15:04")))
+
+	d := dueItem{item: item, gracePeriod: gracePeriod, stoppedAt: stoppedAt}
+	resolved, ok, resolveErr := s.resolveToArr(item, safety)
+	if resolveErr != nil {
+		s.log.Error().Msg(fmt.Sprintf("could not look up '%s' in radarr/sonarr, will retry next sweep: %v", displayTitle(item), resolveErr))
+		// Still reported as due (so the UI preview can show it), just
+		// unresolved — a manual delete attempt will surface the same
+		// error.
+	} else if ok {
+		d.resolved = true
+		d.arrItem = resolved
+	}
+	return d, true
+}
+
+// deleteDueItem deletes one item previously returned by findDue, via the
+// same arrClient.deleteMovie/deleteSeries calls the cron sweep has always
+// used. This is also what the HTTP API's manual single-item delete action
+// calls, so there is only ever one delete code path.
+func (s *sweeper) deleteDueItem(d dueItem) error {
+	var deleteErr error
+	switch d.arrItem.kind {
+	case kindMovie:
+		deleteErr = s.arr.deleteMovie(d.arrItem.id)
+	case kindSeries:
+		deleteErr = s.arr.deleteSeries(d.arrItem.id)
+	}
+	if deleteErr != nil {
+		s.log.Error().Msg(fmt.Sprintf("failed to delete '%s' (%s id %s), will retry next sweep: %v", d.arrItem.title, d.arrItem.kind, d.arrItem.id, deleteErr))
+		return deleteErr
+	}
+
+	s.log.Info().Msg(fmt.Sprintf("deleted '%s' (%s id %s)", d.arrItem.title, d.arrItem.kind, d.arrItem.id))
+	return nil
 }
 
 // cleanUpSeerr deletes Seerr media records whose title has already been

@@ -13,9 +13,16 @@ accumulating a library indefinitely like a typical *arr setup assumes.
 
 ## How it works
 
-Reaparr is entirely stateless — it keeps no store, no persisted file, and no
-memory of any previous sweep. Every sweep is a fresh, complete pass over live
-Jellyfin data. Restarting the container is a safe, complete reset.
+Reaparr's *matching* is entirely stateless — nothing about a previous sweep
+is remembered, and every sweep independently re-derives "what's due" from
+live Jellyfin data. Restarting the container is always a safe, complete
+reset of that matching logic.
+
+Settings and connections (see "Configuration" and "Dashboard" below) are the
+one thing Reaparr does persist, in a small JSON file under its data
+directory — so a value entered through the dashboard survives a restart.
+This is unrelated to the sweep's statelessness: it's configuration, not a
+memory of past deletions.
 
 On a configurable cron schedule, each sweep:
 
@@ -109,14 +116,20 @@ title and naturally retries on the next sweep if a delete call fails.
 
 ## Configuration
 
-All configuration is via environment variables.
+Every setting below can be set either as an environment variable or from
+the dashboard (see "Dashboard" below) — whichever you prefer. **If an
+environment variable is set, it always wins**: the dashboard shows that
+field locked/read-only, naming the env var controlling it, and the API
+rejects any attempt to change it. A field with no env var set is editable
+from the dashboard and persisted to Reaparr's data directory, surviving a
+container restart.
 
 | Variable | Default | Description |
 |---|---|---|
 | `JELLYFIN_URL` | `http://jellyfin:8096` | Jellyfin base URL |
-| `JELLYFIN_API_KEY` | — (required) | Jellyfin API key |
+| `JELLYFIN_API_KEY` | — | Jellyfin API key. Required for Reaparr to do anything — but no longer required at container *startup*; Reaparr now starts fine with nothing configured and simply reports "not configured" in the dashboard and skips sweeps until it is |
 | `RADARR_URL` | `http://radarr:7878` | Radarr base URL |
-| `RADARR_API_KEY` | — | Radarr API key. At least one of `RADARR_API_KEY`/`SONARR_API_KEY` is required; either alone is enough for a movies-only or TV-only setup |
+| `RADARR_API_KEY` | — | Radarr API key. At least one of `RADARR_API_KEY`/`SONARR_API_KEY` is needed; either alone is enough for a movies-only or TV-only setup |
 | `SONARR_URL` | `http://sonarr:8989` | Sonarr base URL |
 | `SONARR_API_KEY` | — | Sonarr API key. See `RADARR_API_KEY` above |
 | `DELETE_MOVIES_AFTER` | `7d` | How long after the last `VideoPlaybackStopped` event a still-played movie must wait before deletion (the grace period — see below) |
@@ -125,6 +138,7 @@ All configuration is via environment variables.
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 | `SEERR_URL` | `http://seerr:5055` | Seerr base URL. Entirely optional — see "Seerr cleanup" below |
 | `SEERR_API_KEY` | — | Seerr API key. If unset, Reaparr never talks to Seerr at all |
+| `REAPARR_DATA_DIR` | `/app/data` | Where Reaparr persists dashboard-entered settings/connections (`config.json`) |
 
 Both grace-period variables accept Go duration strings (`45m`, `6h`, `168h`,
 `1h30m`) plus `d` (days) and `w` (weeks) suffixes — e.g. `7d`, `2w`.
@@ -135,15 +149,45 @@ The grace period exists to protect against a premature or mistaken "played"
 flag (e.g. skipping credits) triggering deletion before anyone notices
 something's wrong.
 
-API keys are never logged in full, even at debug level — only a
-present/absent flag.
+API keys are never logged in full, even at debug level, and are masked in
+the dashboard/API once saved (only the last 4 characters shown) — only a
+present/absent flag or masked value is ever exposed.
+
+## Dashboard
+
+Reaparr serves a small web dashboard on **port 8767** with three tabs:
+
+- **Due for deletion** — a live preview of everything currently matching
+  the watched-and-past-grace-period rule, using the exact same matching
+  code the scheduled sweep uses (not a separate, potentially-diverging
+  check). Each item can be deleted immediately via its own button, calling
+  the same Radarr/Sonarr delete path the cron sweep uses.
+- **Settings** — the grace periods, poll schedule, and log level, editable
+  unless locked by an env var (see "Configuration" above).
+- **Connections** — Jellyfin/Radarr/Sonarr/Seerr URL + API key, each with a
+  "Test connection" button, editable unless locked by an env var.
+
+A settings/connections change made in the dashboard takes effect on the
+very next sweep — no restart required.
+
+**No authentication.** The dashboard has no login and is not meant to be
+exposed outside your LAN — anyone who can reach port 8767 can view API keys
+(masked) and trigger deletions. This matches the trust model this project
+is typically deployed alongside (e.g. Maintainerr, qBittorrent's WebUI) but
+is a real, known gap for a tool that can delete media; adding auth is a
+planned follow-up, not yet implemented. Keep this port off any
+internet-facing reverse proxy until it is.
 
 ## Deployment
 
-Reaparr is a single static binary with no HTTP surface and no persisted
-state — it's a background process only, with no ports to expose and no
-volumes to mount. It needs network access to Jellyfin and Radarr/Sonarr, and
-must **not** be given access to qBittorrent or its network.
+Reaparr is a single static binary that both runs the scheduled sweep and
+serves the dashboard on port 8767. It persists dashboard-entered
+configuration under `/app/data` (see `REAPARR_DATA_DIR` above) — mount a
+volume there if you want settings entered via the dashboard to survive a
+container recreate (not just a restart, which the container's own
+filesystem already survives). It needs network access to Jellyfin and
+Radarr/Sonarr, and must **not** be given access to qBittorrent or its
+network.
 
 Pre-built images are published to
 [ghcr.io/miista/reaparr](https://github.com/Miista/reaparr/pkgs/container/reaparr)
@@ -163,9 +207,18 @@ reaparr:
     DELETE_MOVIES_AFTER: 2d
     DELETE_TV_SHOWS_AFTER: 7d
     POLL_SCHEDULE: "@hourly"
+  ports:
+    - 8767:8767
+  volumes:
+    - ./reaparr/data:/app/data
   networks:
     - media
 ```
+
+Every `environment:` line above is optional — omit any of them (or all of
+them) and configure that field from the dashboard instead. The example
+shows the fully-env-var-driven setup for parity with Reaparr's original,
+pre-dashboard deployment style.
 
 ## Development
 
