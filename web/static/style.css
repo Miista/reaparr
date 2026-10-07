@@ -392,8 +392,10 @@ h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
     box-shadow: 0 4px 16px oklch(0.55 0.2 290 / .45), inset 0 1px 0 rgba(255,255,255,.18);
   }
 
-  /* Sticky save bars sit above both bottom bars. */
-  .save-bar { bottom: calc(128px + env(safe-area-inset-bottom)); }
+  /* Sticky save bars sit above both bottom bars, on one line. */
+  .save-bar { bottom: calc(128px + env(safe-area-inset-bottom)); flex-wrap: nowrap; gap: 8px; padding: 10px 10px 10px 14px; }
+  .save-bar .msg { min-width: 0; font-size: 13px; }
+  .save-bar .btn { padding: 9px 14px; }
   main:has(.subtabs) { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
 }
 
