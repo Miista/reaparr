@@ -294,13 +294,16 @@ h1 { margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.03em; }
   background: oklch(0.52 0.19 262 / .92); box-shadow: 0 2px 8px rgba(0,0,0,.4);
 }
 .cover-kind.series { background: oklch(0.55 0.2 300 / .92); }
+/* The shield is the circle's own background image, so circle and icon are
+   always rasterised together — an inline SVG child can land half a pixel
+   off horizontally when the card has a fractional width. */
 .cover-kept {
   position: absolute; top: 7px; right: 7px; width: 26px; height: 26px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center; color: #fff;
-  background: oklch(0.58 0.14 150); box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 2px 8px rgba(0,0,0,.5);
+  background-color: oklch(0.58 0.14 150);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='1 1.5 18 18' fill='none' stroke='%23fff' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M10 2.5l6 2.5v4.5c0 3.8-2.6 6.6-6 8-3.4-1.4-6-4.2-6-8V5z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: center; background-size: 14px 14px;
+  box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 2px 8px rgba(0,0,0,.5);
 }
-/* Block, so it's centred by the flexbox rather than sitting on a text baseline. */
-.cover-kept svg { display: block; }
 .keep-toggle {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
   padding: 6px 6px 6px 12px; border-radius: 999px; border: 1px solid var(--border-2); background: var(--field);

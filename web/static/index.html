@@ -150,7 +150,7 @@
             <span class="cover-fallback">{{ it.title }}</span>
             <img :src="'/api/poster/' + it.service + '/' + it.id" alt="" loading="lazy" @error="$event.target.remove()">
             <span class="cover-kind" :class="it.kind">{{ it.kind }}</span>
-            <span class="cover-kept" v-if="it.kept"><svg width="14" height="14" viewBox="1.5 1.25 17 17" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 2.5l6 2.5v4.5c0 3.8-2.6 6.6-6 8-3.4-1.4-6-4.2-6-8V5z"></path></svg></span>
+            <span class="cover-kept" v-if="it.kept" aria-label="Kept"></span>
           </div>
           <button type="button" class="keep-toggle" role="switch" :aria-checked="it.kept" :class="{ on: it.kept }" @click="toggleKeep(it)" :disabled="libraryBusy">
             <span>Keep</span>
