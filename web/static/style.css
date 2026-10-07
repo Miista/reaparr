@@ -372,7 +372,7 @@ h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
 .duration-box.invalid .duration-input { border-bottom-color: oklch(0.55 0.15 25 / .7); }
 .duration-input[readonly] { color: #a9abb8; border-bottom-style: dashed; }
 .duration-human { font-size: 14px; color: var(--muted-2); }
-.duration-box.invalid .duration-human { color: var(--red-text); }
+.duration-error { margin: -2px 0 0; font-size: 13px; color: var(--red-text); }
 
 .cron-box {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 6px 6px 6px 14px; border-radius: 10px;

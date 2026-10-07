@@ -532,24 +532,38 @@ function App() {
       return secs !== null && secs >= MIN_GRACE_SECONDS;
     },
 
+    // durationHuman is the "= 7 days" shown beside a valid value ('' when
+    // invalid — durationError explains instead).
     durationHuman(raw) {
+      const v = (raw || '').trim();
+      if (!this.graceValid(v)) return '';
+      const w = /^(\d+(?:\.\d+)?)w$/.exec(v);
+      return '= ' + (w ? plural(+w[1], 'week') : humanSeconds(parseDuration(v)));
+    },
+
+    // durationError explains an invalid grace period ('' when valid). Shown
+    // on its own line below the input, so it never fights the input for
+    // space.
+    durationError(raw) {
       const v = (raw || '').trim();
       const secs = parseDuration(v);
       if (secs === null) {
         // Days/weeks can't be combined with other units (e.g. 7d2h) — say
-        // so, and offer the equivalent in hours.
+        // so, and offer the exact equivalent without days/weeks.
         const units = { w: 604800, d: 86400, h: 3600, m: 60, s: 1 };
         const parts = [...v.matchAll(/(\d+(?:\.\d+)?)([wdhms])/g)];
         const isCompound = parts.length > 1 && parts.map((p) => p[0]).join('') === v && /[dw]/.test(v);
         if (isCompound) {
-          const hours = parts.reduce((sum, p) => sum + (+p[1] * units[p[2]]) / 3600, 0);
-          return `Can't mix days/weeks with other units — use ${Math.round(hours * 100) / 100}h`;
+          const total = Math.round(parts.reduce((sum, p) => sum + +p[1] * units[p[2]], 0));
+          const h = Math.floor(total / 3600);
+          const m = Math.floor((total % 3600) / 60);
+          const s = total % 60;
+          return `Can't mix days/weeks with other units — use ${h}h${m ? m + 'm' : ''}${s ? s + 's' : ''}`;
         }
         return 'Use a number + h, d or w (e.g. 7d, 36h, 2w)';
       }
       if (secs < MIN_GRACE_SECONDS) return 'Minimum is 1 day';
-      const w = /^(\d+(?:\.\d+)?)w$/.exec(v);
-      return '= ' + (w ? plural(+w[1], 'week') : humanSeconds(secs));
+      return '';
     },
 
     cronHuman(raw) {

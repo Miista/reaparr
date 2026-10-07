@@ -191,6 +191,7 @@
               <input class="duration-input" v-model="settings.values[d.key]" :readonly="settings.env_managed[d.key] ? true : null" placeholder="7d">
               <span class="duration-human">{{ durationHuman(settings.values[d.key]) }}</span>
             </div>
+            <p class="duration-error" v-if="!settings.env_managed[d.key] && durationError(settings.values[d.key])">{{ durationError(settings.values[d.key]) }}</p>
             <p class="field-help">{{ d.help }}</p>
           </div>
         </div>
