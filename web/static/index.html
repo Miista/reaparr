@@ -24,7 +24,8 @@
       <div class="bang">!</div>
       <div class="text">
         <span class="title">{{ missingServices.length ? 'Reaparr is not running' : "Reaparr can't reach its services" }}</span>
-        <span class="sub">{{ problems.map((p) => p.name + ': ' + (p.state === 'fail' ? 'connection failed' : 'not configured')).join(' · ') }}</span>
+        <span class="sub">{{ problems.map((p) => p.name + ': ' + (p.state === 'fail' ? 'connection failed' : 'not configured')).join(' · ') }}
+          <a href="#" v-if="!(tab === 'settings' && settingsTab === 'connections')" @click.prevent="tab = 'settings'; settingsTab = 'connections'">Open Connections</a></span>
       </div>
       <div class="progress">
         <div class="track"><div class="fill" :style="{ width: Math.round(doneCount / 3 * 100) + '%' }"></div></div>
@@ -36,12 +37,11 @@
       <nav class="tabs">
         <a :class="{ active: tab === 'due' }" @click="tab = 'due'">Due for deletion<span class="tab-badge" :class="{ hot: due.length }">{{ due.length }}</span></a>
         <a :class="{ active: tab === 'kept' }" @click="tab = 'kept'">Kept<span class="tab-badge">{{ kept.length }}</span></a>
-        <a :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Settings</a>
-        <a :class="{ active: tab === 'connections' }" @click="tab = 'connections'">Connections</a>
+        <a :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Settings<span class="alert-dot" v-if="problems.length || missingServices.length"></span></a>
       </nav>
       <div class="title-block">
-        <h1>{{ { due: 'Due for deletion', kept: 'Kept', settings: 'Settings', connections: 'Connections' }[tab] }}</h1>
-        <p class="env-note" v-if="tab === 'settings' || tab === 'connections'">
+        <h1>{{ { due: 'Due for deletion', kept: 'Kept', settings: 'Settings' }[tab] }}</h1>
+        <p class="env-note" v-if="tab === 'settings'">
           Fields locked with
           <span class="env-chip"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>ENV</span>
           are pinned by an environment variable and cannot be changed here.
@@ -142,8 +142,13 @@
       </div>
     </div>
 
-    <!-- Settings -->
-    <div class="stack with-bar" v-if="tab === 'settings'">
+    <nav class="subtabs" v-if="tab === 'settings'">
+      <a :class="{ active: settingsTab === 'general' }" @click="settingsTab = 'general'">General</a>
+      <a :class="{ active: settingsTab === 'connections' }" @click="settingsTab = 'connections'">Connections<span class="alert-dot" v-if="problems.length || missingServices.length"></span></a>
+    </nav>
+
+    <!-- Settings: General -->
+    <div class="stack with-bar" v-if="tab === 'settings' && settingsTab === 'general'">
       <section class="card" style="--hue: 25">
         <div class="accent"></div>
         <div class="card-head" style="align-items:center">
@@ -247,12 +252,12 @@
       <div class="save-bar" :class="settingsBar.cls">
         <span class="msg"><span class="dot"></span>{{ settingsBar.msg }}</span>
         <button class="btn btn-ghost" @click="discardSettings" :disabled="!settingsDirty">Discard</button>
-        <button class="btn btn-primary" @click="saveSettings" :disabled="!settingsValid">Save settings</button>
+        <button class="btn btn-primary" @click="saveSettings" :disabled="!settingsValid || !settingsDirty">Save</button>
       </div>
     </div>
 
-    <!-- Connections -->
-    <div class="stack with-bar" v-if="tab === 'connections'">
+    <!-- Settings: Connections -->
+    <div class="stack with-bar" v-if="tab === 'settings' && settingsTab === 'connections'">
       <section class="card" v-for="svc in services" :key="svc.id" :style="{ '--hue': svc.hue }" :class="connState(svc.id).status">
         <div class="accent"></div>
         <div class="card-head">
@@ -294,7 +299,7 @@
       <div class="save-bar" :class="connectionsBar.cls">
         <span class="msg"><span class="dot"></span>{{ connectionsBar.msg }}</span>
         <button class="btn btn-ghost" @click="discardConnections" :disabled="!connectionsDirty">Discard</button>
-        <button class="btn btn-primary" @click="saveConnections" :disabled="!connectionsDirty">Save connections</button>
+        <button class="btn btn-primary" @click="saveConnections" :disabled="!connectionsDirty">Save</button>
       </div>
     </div>
   </main>

@@ -44,6 +44,7 @@ function humanSeconds(s) {
 function App() {
   return {
     tab: 'due',
+    settingsTab: 'general', // 'general' | 'connections'
     services: SERVICES,
     now: Date.now(),
 
@@ -423,6 +424,14 @@ function App() {
       return { main: 'Not scheduled', sub: `Auto-delete is off · due since ${this.formatDate(due)}`, cls: 'when-off' };
     },
 
+    // flashSaved shows a save bar's green "… saved" message for a few
+    // seconds, then lets it fall back to "All changes saved".
+    flashSaved(key) {
+      const at = Date.now();
+      this[key] = at;
+      setTimeout(() => { if (this[key] === at) this[key] = null; }, 3000);
+    },
+
     // --- Settings -------------------------------------------------------
 
     parseDuration,
@@ -500,7 +509,7 @@ function App() {
         }
         this.settings = await res.json();
         this.savedSettings = this.snapshotSettings();
-        this.settingsSavedAt = Date.now();
+        this.flashSaved('settingsSavedAt');
         await this.loadStatus();
       } catch (err) {
         this.settingsError = err.message;
@@ -597,7 +606,7 @@ function App() {
         }
         this.applyConnections(await res.json());
         this.connectionKeyInputs = { jellyfin: '', radarr: '', sonarr: '', seerr: '' };
-        this.connectionsSavedAt = Date.now();
+        this.flashSaved('connectionsSavedAt');
         this.connStatus = {};
         await this.loadStatus();
         this.testConfiguredConnections();
