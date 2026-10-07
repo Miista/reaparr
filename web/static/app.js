@@ -526,7 +526,18 @@ function App() {
     durationHuman(raw) {
       const v = (raw || '').trim();
       const secs = parseDuration(v);
-      if (secs === null) return 'Use a number + h, d or w';
+      if (secs === null) {
+        // Days/weeks can't be combined with other units (e.g. 7d2h) — say
+        // so, and offer the equivalent in hours.
+        const units = { w: 604800, d: 86400, h: 3600, m: 60, s: 1 };
+        const parts = [...v.matchAll(/(\d+(?:\.\d+)?)([wdhms])/g)];
+        const isCompound = parts.length > 1 && parts.map((p) => p[0]).join('') === v && /[dw]/.test(v);
+        if (isCompound) {
+          const hours = parts.reduce((sum, p) => sum + (+p[1] * units[p[2]]) / 3600, 0);
+          return `Can't mix days/weeks with other units — use ${Math.round(hours * 100) / 100}h`;
+        }
+        return 'Use a number + h, d or w (e.g. 7d, 36h, 2w)';
+      }
       const w = /^(\d+(?:\.\d+)?)w$/.exec(v);
       return '= ' + (w ? plural(+w[1], 'week') : humanSeconds(secs));
     },
