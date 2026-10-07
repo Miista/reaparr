@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -122,9 +123,24 @@ func renderDue(due []dueItem) []api.DueItem {
 			Due:         d.due,
 			Resolved:    d.resolved,
 			Reason:      d.reason,
+			ArrService:  string(arrRef(d).service),
+			ArrID:       arrRef(d).id,
 		})
 	}
 	return out
+}
+
+// arrRef is the Radarr movie / Sonarr series behind a resolved due item
+// (zero for an unresolved one) — used for its poster.
+func arrRef(d dueItem) libraryItem {
+	switch {
+	case !d.resolved:
+		return libraryItem{}
+	case d.kind == kindSeason:
+		return libraryItem{service: serviceSonarr, id: d.season.seriesID}
+	default:
+		return libraryItem{service: serviceRadarr, id: d.movie.ID}
+	}
 }
 
 // Delete implements api.Sweeper, deleting one specific watched movie or
@@ -283,31 +299,46 @@ func (l *liveSweeper) KeepSelected(ids []string) (int, error) {
 	return tagged, nil
 }
 
-// Kept implements api.Sweeper: everything carrying the keep tag.
-func (l *liveSweeper) Kept() ([]api.KeptItem, error) {
-	items, err := l.current().keptItems()
+// Poster implements api.Sweeper.
+func (l *liveSweeper) Poster(service string, id int) (io.ReadCloser, string, error) {
+	svc := arrService(service)
+	if svc != serviceRadarr && svc != serviceSonarr {
+		return nil, "", fmt.Errorf("unknown service %q", service)
+	}
+	return l.current().arr.poster(svc, id)
+}
+
+// Library implements api.Sweeper: every movie and series in Radarr/Sonarr,
+// with whether each is kept.
+func (l *liveSweeper) Library() ([]api.LibraryItem, error) {
+	items, err := l.current().libraryItems()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]api.KeptItem, 0, len(items))
-	for _, k := range items {
+	out := make([]api.LibraryItem, 0, len(items))
+	for _, it := range items {
 		kind := "movie"
-		if k.service == serviceSonarr {
+		if it.service == serviceSonarr {
 			kind = "series"
 		}
-		out = append(out, api.KeptItem{Service: string(k.service), ID: k.id, Title: k.title, Kind: kind})
+		out = append(out, api.LibraryItem{Service: string(it.service), ID: it.id, Title: it.title, Year: it.year, Kind: kind, Kept: it.kept})
 	}
 	return out, nil
 }
 
-// Unkeep implements api.Sweeper: removes the keep tag; the item reappears
-// in the list on the preview refresh this triggers (if it's watched).
-func (l *liveSweeper) Unkeep(service string, id int) error {
-	svc := arrService(service)
-	if svc != serviceRadarr && svc != serviceSonarr {
-		return fmt.Errorf("unknown service %q", service)
+// SetKept implements api.Sweeper: keeps or unkeeps Radarr movies / Sonarr
+// series by their own IDs, then refreshes the due list (kept items leave
+// it; unkept watched ones return).
+func (l *liveSweeper) SetKept(refs []api.LibraryRef, keep bool) error {
+	ids := map[arrService][]int{}
+	for _, r := range refs {
+		svc := arrService(r.Service)
+		if svc != serviceRadarr && svc != serviceSonarr {
+			return fmt.Errorf("unknown service %q", r.Service)
+		}
+		ids[svc] = append(ids[svc], r.ID)
 	}
-	if err := l.current().unkeep(svc, id); err != nil {
+	if err := l.current().setKept(ids, keep); err != nil {
 		return err
 	}
 	go l.RefreshPreview()

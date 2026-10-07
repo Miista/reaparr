@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -122,44 +123,79 @@ func (s *sweeper) resolveKeepTags() (keepTagIDs, error) {
 	return ids, nil
 }
 
-// keptItem is one movie or series carrying the keep tag.
-type keptItem struct {
+// libraryItem is one movie (Radarr) or series (Sonarr), with whether it
+// carries the keep tag.
+type libraryItem struct {
 	service arrService
 	id      int
 	title   string
+	year    int
+	kept    bool
 }
 
-// keptItems lists everything currently carrying the keep tag, watched or
-// not — including anything tagged directly in Radarr/Sonarr.
-func (s *sweeper) keptItems() ([]keptItem, error) {
+// libraryItems lists every movie and series in Radarr/Sonarr, live — the
+// dashboard's Library tab, where anything can be kept before it's watched.
+func (s *sweeper) libraryItems() ([]libraryItem, error) {
 	tags, err := s.resolveKeepTags()
 	if err != nil {
 		return nil, err
 	}
-	var out []keptItem
-	if tags.radarr != 0 {
+	var out []libraryItem
+	if s.arr.hasRadarr() {
 		var movies []radarrMovie
 		if err := s.arr.get(s.arr.radarrURL+"/api/v3/movie", s.arr.radarrAPIKey, &movies); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reading radarr's movies: %w", err)
 		}
 		for _, m := range movies {
-			if hasTag(m.Tags, tags.radarr) {
-				out = append(out, keptItem{service: serviceRadarr, id: m.ID, title: m.Title})
-			}
+			out = append(out, libraryItem{service: serviceRadarr, id: m.ID, title: m.Title, year: m.Year, kept: hasTag(m.Tags, tags.radarr)})
 		}
 	}
-	if tags.sonarr != 0 {
+	if s.arr.hasSonarr() {
 		var series []sonarrSeries
 		if err := s.arr.get(s.arr.sonarrURL+"/api/v3/series", s.arr.sonarrAPIKey, &series); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reading sonarr's series: %w", err)
 		}
 		for _, sr := range series {
-			if hasTag(sr.Tags, tags.sonarr) {
-				out = append(out, keptItem{service: serviceSonarr, id: sr.ID, title: sr.Title})
-			}
+			out = append(out, libraryItem{service: serviceSonarr, id: sr.ID, title: sr.Title, year: sr.Year, kept: hasTag(sr.Tags, tags.sonarr)})
 		}
 	}
 	return out, nil
+}
+
+// setKept adds (keep=true) or removes the keep tag on Radarr movies /
+// Sonarr series by their own IDs — one bulk call per service.
+func (s *sweeper) setKept(ids map[arrService][]int, keep bool) error {
+	for _, svc := range []arrService{serviceRadarr, serviceSonarr} {
+		if len(ids[svc]) == 0 {
+			continue
+		}
+		var tagID int
+		if keep {
+			id, err := s.arr.ensureTag(svc, s.keepTag)
+			if err != nil {
+				return err
+			}
+			tagID = id
+		} else {
+			id, found, err := s.arr.findTag(svc, s.keepTag)
+			if err != nil {
+				return err
+			}
+			if !found {
+				continue // nothing can carry a tag that doesn't exist
+			}
+			tagID = id
+		}
+		if err := s.arr.setTag(svc, ids[svc], tagID, keep); err != nil {
+			return fmt.Errorf("updating keepers in %s: %w", svc, err)
+		}
+		verb := "marked as keepers"
+		if !keep {
+			verb = "no longer keepers"
+		}
+		s.log.Info().Msg(fmt.Sprintf("%d %s item(s) %s (tag %q)", len(ids[svc]), svc, verb, s.keepTag))
+	}
+	return nil
 }
 
 // keep tags a due item's movie or series as a keeper.
@@ -192,33 +228,29 @@ func (s *sweeper) keepMany(items []dueItem) (int, error) {
 		}
 	}
 
-	var tagged int
-	for _, svc := range []arrService{serviceRadarr, serviceSonarr} {
-		if len(ids[svc]) == 0 {
-			continue
-		}
-		tagID, err := s.arr.ensureTag(svc, s.keepTag)
-		if err != nil {
-			return tagged, err
-		}
-		if err := s.arr.setTag(svc, ids[svc], tagID, true); err != nil {
-			return tagged, fmt.Errorf("tagging in %s: %w", svc, err)
-		}
-		tagged += len(ids[svc])
-		s.log.Info().Msg(fmt.Sprintf("marked %d %s item(s) as keepers (tag %q)", len(ids[svc]), svc, s.keepTag))
+	if err := s.setKept(ids, true); err != nil {
+		return 0, err
 	}
-	return tagged, nil
+	return len(ids[serviceRadarr]) + len(ids[serviceSonarr]), nil
 }
 
-// unkeep removes the keep tag from a movie or series.
-func (s *sweeper) unkeep(svc arrService, arrID int) error {
-	tagID, found, err := s.arr.findTag(svc, s.keepTag)
-	if err != nil || !found {
-		return err
+// poster fetches a movie's / series' small poster from Radarr/Sonarr's own
+// media cover cache (never from the internet), for the dashboard. The
+// caller must close the body.
+func (a *arrClient) poster(svc arrService, id int) (io.ReadCloser, string, error) {
+	baseURL, apiKey := a.endpoint(svc)
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/v3/mediacover/%d/poster-250.jpg", baseURL, id), nil)
+	if err != nil {
+		return nil, "", err
 	}
-	if err := s.arr.setTag(svc, []int{arrID}, tagID, false); err != nil {
-		return fmt.Errorf("untagging %s id %d: %w", svc, arrID, err)
+	req.Header.Set("X-Api-Key", apiKey)
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return nil, "", err
 	}
-	s.log.Info().Msg(fmt.Sprintf("%s id %d is no longer a keeper", svc, arrID))
-	return nil
+	if resp.StatusCode >= 300 {
+		resp.Body.Close()
+		return nil, "", fmt.Errorf("%s poster for %d: %s", svc, id, resp.Status)
+	}
+	return resp.Body, resp.Header.Get("Content-Type"), nil
 }

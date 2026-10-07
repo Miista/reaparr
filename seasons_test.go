@@ -451,3 +451,31 @@ func TestKeeper_KeepMany_DedupesSeries(t *testing.T) {
 		t.Errorf("seriesIds = %v, want [7]", ids)
 	}
 }
+
+// The library lists Sonarr series with their kept flag, and unkeeping
+// removes the tag through the series editor.
+func TestLibrary_ListsKeptAndUnkeeps(t *testing.T) {
+	sonarr, srv := newFakeSonarr(t, season1())
+	sonarr.tags = []arrTag{{ID: 5, Label: "reaparr-keep"}}
+	sonarr.seriesTags = []int{5}
+	sw := &sweeper{
+		arr:     &arrClient{sonarrURL: srv.URL, sonarrAPIKey: "k", httpClient: srv.Client(), log: testLogger(t)},
+		keepTag: "reaparr-keep",
+		log:     testLogger(t),
+	}
+
+	items, err := sw.libraryItems()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !items[0].kept || items[0].service != serviceSonarr || items[0].id != 7 {
+		t.Fatalf("library = %+v, want series 7 kept", items)
+	}
+
+	if err := sw.setKept(map[arrService][]int{serviceSonarr: {7}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if sonarr.editorBody["applyTags"] != "remove" || sonarr.editorBody["tags"].([]any)[0] != float64(5) {
+		t.Fatalf("editor body = %v, want tag 5 removed", sonarr.editorBody)
+	}
+}

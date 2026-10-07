@@ -57,10 +57,18 @@ function App() {
     keepingID: null,
     keepingSelected: false,
 
-    kept: [],
-    keptLoading: false,
-    keptError: '',
-    unkeepingID: null,
+    library: [], // every Radarr movie / Sonarr series: { service, id, title, year, kind, kept }
+    libraryLoading: false,
+    libraryError: '',
+    libraryQuery: '',
+    libraryFilter: 'all',
+    libraryFilters: [
+      { key: 'all', label: 'All' },
+      { key: 'kept', label: 'Kept' },
+      { key: 'movie', label: 'Movies' },
+      { key: 'series', label: 'Series' },
+    ],
+    libraryBusy: false,
     deleteResult: '',
 
     missingServices: [],
@@ -86,7 +94,7 @@ function App() {
     async mounted() {
       setInterval(() => { this.now = Date.now(); }, 30000);
       document.addEventListener('keydown', (e) => this.onDialogKey(e));
-      await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections(), this.loadKept()]);
+      await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections(), this.loadLibrary()]);
       this.testConfiguredConnections();
     },
 
@@ -243,7 +251,7 @@ function App() {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error || 'Keep failed.');
         }
-        await Promise.all([this.loadDue(), this.loadKept()]);
+        await Promise.all([this.loadDue(), this.loadLibrary()]);
       } catch (err) {
         this.dueError = err.message;
       } finally {
@@ -302,7 +310,7 @@ function App() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Keep failed.');
         this.selected = [];
-        await Promise.all([this.loadDue(), this.loadKept()]);
+        await Promise.all([this.loadDue(), this.loadLibrary()]);
       } catch (err) {
         this.dueError = err.message;
       } finally {
@@ -310,48 +318,75 @@ function App() {
       }
     },
 
-    // --- Kept -----------------------------------------------------------
+    // --- Library --------------------------------------------------------
 
-    async loadKept() {
-      this.keptLoading = true;
-      this.keptError = '';
+    libKey(it) {
+      return `${it.service}:${it.id}`;
+    },
+
+    get keptCount() {
+      return this.library.filter((it) => it.kept).length;
+    },
+
+    get filteredLibrary() {
+      const q = this.libraryQuery.trim().toLowerCase();
+      return this.library.filter((it) => {
+        if (this.libraryFilter === 'kept' && !it.kept) return false;
+        if ((this.libraryFilter === 'movie' || this.libraryFilter === 'series') && it.kind !== this.libraryFilter) return false;
+        return !q || it.title.toLowerCase().includes(q);
+      });
+    },
+
+    openLibrary() {
+      this.tab = 'library';
+      this.loadLibrary();
+    },
+
+    async loadLibrary() {
+      this.libraryLoading = true;
+      this.libraryError = '';
       try {
-        const res = await fetch('/api/kept');
+        const res = await fetch('/api/library');
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || 'Failed to load keepers.');
-        this.kept = (data.kept || []).sort((a, b) => a.title.localeCompare(b.title));
+        if (!res.ok) throw new Error(data.error || 'Failed to load the library.');
+        this.library = (data.items || []).sort((a, b) => a.title.localeCompare(b.title));
       } catch (err) {
-        this.keptError = err.message;
+        this.libraryError = err.message;
       } finally {
-        this.keptLoading = false;
+        this.libraryLoading = false;
       }
     },
 
-    async unkeep(k) {
-      if (!await this.ask({
-        title: `Stop keeping ${k.title}?`,
+    // A single Keep needs no confirmation (it only protects); unkeeping does.
+    async toggleKeep(it) {
+      if (it.kept && !await this.ask({
+        title: `Stop keeping ${it.title}?`,
         message: 'It can be deleted again once watched.',
         confirmLabel: 'Unkeep',
         tone: 'neutral',
       })) return;
+      await this.setKept([it], !it.kept);
+    },
 
-      this.unkeepingID = k.service + k.id;
-      this.keptError = '';
+    async setKept(items, keep) {
+      this.libraryBusy = true;
+      this.libraryError = '';
       try {
-        const res = await fetch('/api/unkeep', {
+        const res = await fetch('/api/library/keep', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ service: k.service, id: k.id }),
+          body: JSON.stringify({ keep, items: items.map((it) => ({ service: it.service, id: it.id })) }),
         });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || 'Unkeep failed.');
-        }
-        this.kept = this.kept.filter((x) => !(x.service === k.service && x.id === k.id));
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Update failed.');
+        for (const it of items) it.kept = keep;
+        // The backend rebuilds the due list in the background; pick it up.
+        setTimeout(() => this.loadDue(), 2500);
       } catch (err) {
-        this.keptError = err.message;
+        this.libraryError = err.message;
+        await this.loadLibrary();
       } finally {
-        this.unkeepingID = null;
+        this.libraryBusy = false;
       }
     },
 

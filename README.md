@@ -67,11 +67,16 @@ retried on the next sweep, since there's no state marking it as "handled."
 
 A movie or series carrying the keep tag (`REAPARR_SETTING_KEEP_TAG`,
 default `reaparr-keep`) in Radarr/Sonarr is **never deleted** — not by the
-scheduled run, and not by the dashboard's delete buttons. Press **Keep** on
-a row in the dashboard — or select rows and press **Keep N selected** — to
-add the tag (Reaparr creates it in Radarr/Sonarr
-the first time), or add it yourself in Radarr/Sonarr. The **Kept** tab
-lists every keeper, with **Unkeep** to remove the tag.
+scheduled run, and not by the dashboard's delete buttons. Add the tag from
+the dashboard (Reaparr creates it in Radarr/Sonarr the first time), or
+yourself in Radarr/Sonarr:
+
+- **Due** tab: press **Keep** on a row, or select rows and press **Keep N
+  selected**.
+- **Library** tab: a poster grid of every movie in Radarr and series in
+  Sonarr — watched or not — with search and All / Kept / Movies / Series
+  filters, and a **Keep** toggle under each poster. This is how you protect
+  something before it's ever watched.
 
 In Sonarr a tag applies to the whole series, so keeping one season keeps
 every season. If Reaparr can't read the tag from Radarr/Sonarr, it deletes

@@ -31,6 +31,7 @@ type radarrMovie struct {
 	ID     int    `json:"id"`
 	Title  string `json:"title"`
 	TmdbID int    `json:"tmdbId"`
+	Year   int    `json:"year"`
 	Tags   []int  `json:"tags"`
 }
 
@@ -38,6 +39,7 @@ type sonarrSeries struct {
 	ID     int    `json:"id"`
 	Title  string `json:"title"`
 	TvdbID int    `json:"tvdbId"`
+	Year   int    `json:"year"`
 	Tags   []int  `json:"tags"`
 }
 

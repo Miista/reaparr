@@ -9,7 +9,9 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,18 +53,28 @@ type Sweeper interface {
 	// KeepSelected is Keep for several items; returns how many
 	// movies/series were tagged.
 	KeepSelected(ids []string) (int, error)
-	// Kept lists every keeper.
-	Kept() ([]KeptItem, error)
-	// Unkeep removes keeper status from a Radarr movie / Sonarr series.
-	Unkeep(service string, id int) error
+	// Library lists every movie and series in Radarr/Sonarr.
+	Library() ([]LibraryItem, error)
+	// SetKept keeps (keep=true) or unkeeps Radarr movies / Sonarr series.
+	SetKept(refs []LibraryRef, keep bool) error
+	// Poster returns a movie's / series' small poster image.
+	Poster(service string, id int) (io.ReadCloser, string, error)
 }
 
-// KeptItem is a movie or series marked as a keeper (never deleted).
-type KeptItem struct {
+// LibraryItem is one movie (Radarr) or series (Sonarr) in the library.
+type LibraryItem struct {
 	Service string `json:"service"` // "radarr" or "sonarr"
 	ID      int    `json:"id"`      // Radarr movie / Sonarr series ID
 	Title   string `json:"title"`
+	Year    int    `json:"year"`
 	Kind    string `json:"kind"` // "movie" or "series"
+	Kept    bool   `json:"kept"` // carries the keep tag: never deleted
+}
+
+// LibraryRef identifies a Radarr movie / Sonarr series.
+type LibraryRef struct {
+	Service string `json:"service"`
+	ID      int    `json:"id"`
 }
 
 // DeleteResult summarises a manual multi-item delete.
@@ -84,6 +96,8 @@ type DueItem struct {
 	Due         bool   `json:"due"`        // past its grace period; false => still waiting
 	Resolved    bool   `json:"resolved"`   // false => can't be deleted; Reason says why
 	Reason      string `json:"reason,omitempty"`
+	ArrService  string `json:"arr_service,omitempty"` // "radarr"/"sonarr" when resolved — for the poster
+	ArrID       int    `json:"arr_id,omitempty"`
 }
 
 // ConnectionTester tests a single configured connection and reports whether
@@ -135,8 +149,9 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/due/delete-selected", s.handleDeleteSelected)
 	mux.HandleFunc("/api/keep", s.handleKeep)
 	mux.HandleFunc("/api/keep-selected", s.handleKeepSelected)
-	mux.HandleFunc("/api/kept", s.handleKept)
-	mux.HandleFunc("/api/unkeep", s.handleUnkeep)
+	mux.HandleFunc("/api/library", s.handleLibrary)
+	mux.HandleFunc("/api/library/keep", s.handleLibraryKeep)
+	mux.HandleFunc("/api/poster/", s.handlePoster)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -205,35 +220,67 @@ func (s *Server) handleKeepSelected(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"kept": tagged})
 }
 
-// handleKept lists every keeper.
-func (s *Server) handleKept(w http.ResponseWriter, r *http.Request) {
+// handlePoster proxies a poster from Radarr/Sonarr: GET
+// /api/poster/{radarr|sonarr}/{id}. Proxying keeps the API keys server-side
+// and the browser off the internet; posters rarely change, so they're
+// cached for a day.
+func (s *Server) handlePoster(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	kept, err := s.sweeper.Kept()
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/poster/"), "/")
+	if len(parts) != 2 {
+		http.NotFound(w, r)
+		return
+	}
+	id, err := strconv.Atoi(parts[1])
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	body, contentType, err := s.sweeper.Poster(parts[0], id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer body.Close()
+	if contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = io.Copy(w, body)
+}
+
+// handleLibrary lists every movie and series in Radarr/Sonarr.
+func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	items, err := s.sweeper.Library()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"kept": kept})
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// handleUnkeep removes keeper status from one movie/series.
-func (s *Server) handleUnkeep(w http.ResponseWriter, r *http.Request) {
+// handleLibraryKeep keeps or unkeeps library items.
+func (s *Server) handleLibraryKeep(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	var req struct {
-		Service string `json:"service"`
-		ID      int    `json:"id"`
+		Items []LibraryRef `json:"items"`
+		Keep  bool         `json:"keep"`
 	}
-	if err := readJSON(r, &req); err != nil || req.Service == "" || req.ID == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "service and id are required"})
+	if err := readJSON(r, &req); err != nil || len(req.Items) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "items is required"})
 		return
 	}
-	if err := s.sweeper.Unkeep(req.Service, req.ID); err != nil {
+	if err := s.sweeper.SetKept(req.Items, req.Keep); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
