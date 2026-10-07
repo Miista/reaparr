@@ -19,6 +19,9 @@ function App() {
     testResults: {},
 
     missingServices: [],
+    daemonEnabled: true,
+    deletingAll: false,
+    deleteAllResult: '',
 
     async mounted() {
       await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections()]);
@@ -29,13 +32,36 @@ function App() {
       if (!res.ok) return;
       const data = await res.json();
       this.missingServices = data.missing_services || [];
+      this.daemonEnabled = data.daemon_enabled !== false;
     },
 
-    async loadDue() {
+    async deleteAll() {
+      const n = this.due.filter((item) => item.resolved).length;
+      if (!confirm(`Delete ${n} item(s) now? Everything is re-checked first; only what still qualifies is deleted.`)) return;
+
+      this.deletingAll = true;
+      this.dueError = '';
+      this.deleteAllResult = '';
+      try {
+        const res = await fetch('/api/due/delete-all', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Delete all failed.');
+        this.deleteAllResult = `Deleted ${data.deleted}, skipped ${data.skipped}, failed ${data.failed}.`;
+        await this.loadDue();
+      } catch (err) {
+        this.dueError = err.message;
+      } finally {
+        this.deletingAll = false;
+      }
+    },
+
+    // fresh=true rebuilds the list from live Jellyfin/Radarr/Sonarr data
+    // (the Refresh button); otherwise the server's cached preview is shown.
+    async loadDue(fresh = false) {
       this.dueLoading = true;
       this.dueError = '';
       try {
-        const res = await fetch('/api/due');
+        const res = await fetch(fresh ? '/api/due?fresh=1' : '/api/due');
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error || 'Failed to load due items.');
@@ -90,6 +116,7 @@ function App() {
           throw new Error(data.error || 'Failed to save settings.');
         }
         this.settings = await res.json();
+        await this.loadStatus();
         this.settingsSaved = true;
         setTimeout(() => { this.settingsSaved = false; }, 3000);
       } catch (err) {

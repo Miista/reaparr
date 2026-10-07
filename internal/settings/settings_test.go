@@ -86,6 +86,30 @@ func TestEnvVar(t *testing.T) {
 	}
 }
 
+func TestResolve_DaemonEnabled(t *testing.T) {
+	for _, tt := range []struct {
+		env  string
+		want bool
+	}{
+		{"true", true},
+		{"1", true},
+		{"false", false},
+		{"0", false},
+		{"maybe", false}, // unparseable fails safe: daemon disabled
+	} {
+		t.Run(tt.env, func(t *testing.T) {
+			t.Setenv("REAPARR_SETTING_DAEMON_ENABLED", tt.env)
+			got := Resolve(store.Settings{DaemonEnabled: !tt.want})
+			if got.Settings.DaemonEnabled != tt.want {
+				t.Errorf("DaemonEnabled = %v, want %v", got.Settings.DaemonEnabled, tt.want)
+			}
+			if !got.IsManaged("daemon_enabled") {
+				t.Error("daemon_enabled not reported as env-managed")
+			}
+		})
+	}
+}
+
 func TestResolve_EmptyEnvVarDoesNotCountAsSet(t *testing.T) {
 	t.Setenv("REAPARR_SETTING_LOG_LEVEL", "")
 	got := Resolve(store.Settings{LogLevel: "info"})

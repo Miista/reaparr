@@ -19,9 +19,13 @@
       Reaparr is not running: configure {{ missingServices.join(', ') }}.
       <a href="#" @click.prevent="tab = 'connections'">Go to Connections</a>
     </div>
+    <div class="banner-info" v-else-if="!daemonEnabled">
+      Daemon disabled — nothing is deleted automatically. Delete from the "Ripe for deletion" tab.
+      <a href="#" @click.prevent="tab = 'settings'">Settings</a>
+    </div>
 
     <nav class="tabs">
-      <button :class="{active: tab === 'due'}" @click="tab = 'due'">Due for deletion</button>
+      <button :class="{active: tab === 'due'}" @click="tab = 'due'">Ripe for deletion</button>
       <button :class="{active: tab === 'settings'}" @click="tab = 'settings'">Settings</button>
       <button :class="{active: tab === 'connections'}" @click="tab = 'connections'">Connections</button>
     </nav>
@@ -29,10 +33,14 @@
     <!-- Due for deletion -->
     <div v-if="tab === 'due'">
       <div class="settings-submit-row" style="margin-bottom:16px;">
-        <button class="btn-secondary" @click="loadDue" :disabled="dueLoading">{{ dueLoading ? 'Refreshing…' : 'Refresh' }}</button>
-        <span class="dim" v-if="due.length">{{ due.length }} item(s) currently due</span>
+        <button class="btn-secondary" @click="loadDue(true)" :disabled="dueLoading || missingServices.length">{{ dueLoading ? 'Refreshing…' : 'Refresh' }}</button>
+        <button class="btn-danger" @click="deleteAll" :disabled="deletingAll || !due.length || missingServices.length">
+          {{ deletingAll ? 'Deleting…' : 'Delete all' }}
+        </button>
+        <span class="dim" v-if="due.length">{{ due.length }} item(s) ripe for deletion</span>
       </div>
       <p class="error-box" v-if="dueError">{{ dueError }}</p>
+      <p class="success-box" v-if="deleteAllResult">{{ deleteAllResult }}</p>
 
       <div class="table-scroll" v-if="due.length">
         <table class="data-table">
@@ -59,7 +67,7 @@
           </tbody>
         </table>
       </div>
-      <p v-else-if="!dueLoading && !dueError" class="dim">Nothing is currently due for deletion.</p>
+      <p v-else-if="!dueLoading && !dueError" class="dim">Nothing is currently ripe for deletion.</p>
     </div>
 
     <!-- Settings -->
@@ -69,6 +77,27 @@
       </p>
 
       <form @submit.prevent="saveSettings" class="settings-form">
+        <fieldset>
+          <legend>Daemon</legend>
+          <div class="field-row">
+            <label>Delete automatically on schedule</label>
+            <div v-if="settings.env_managed.daemon_enabled" class="locked-field">
+              <div class="locked-field-row">
+                <span class="mono">{{ settings.values.daemon_enabled ? 'enabled' : 'disabled' }}</span>
+                <span class="lock-badge">
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7V5a4 4 0 1 1 8 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
+                </span>
+              </div>
+              <span class="locked-caption">Managed by <code>{{ settings.env_managed.daemon_enabled }}</code></span>
+            </div>
+            <label v-else class="checkbox-label">
+              <input type="checkbox" v-model="settings.values.daemon_enabled">
+              {{ settings.values.daemon_enabled ? 'Enabled' : 'Disabled' }}
+            </label>
+            <p class="hint">When disabled, nothing is deleted automatically. The "Ripe for deletion" tab still lists what qualifies, and you delete from there.</p>
+          </div>
+        </fieldset>
+
         <fieldset>
           <legend>Cleanup timing</legend>
           <div class="field-row" v-for="f in [

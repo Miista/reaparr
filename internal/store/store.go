@@ -21,6 +21,10 @@ type Settings struct {
 	PollSchedule      string `json:"poll_schedule"`
 	MoviesGracePeriod string `json:"movies_grace_period"` // e.g. "7d" — see duration.go's parseGracePeriod
 	TVGracePeriod     string `json:"tv_grace_period"`
+	// DaemonEnabled controls the scheduled sweep. When false, nothing is
+	// deleted automatically — the dashboard still shows what's due, and
+	// deletions happen only via its buttons.
+	DaemonEnabled bool `json:"daemon_enabled"`
 }
 
 // DefaultSettings mirrors config.go's own defaults, so a fresh install's
@@ -32,6 +36,7 @@ func DefaultSettings() Settings {
 		PollSchedule:      "@hourly",
 		MoviesGracePeriod: "7d",
 		TVGracePeriod:     "7d",
+		DaemonEnabled:     true,
 	}
 }
 

@@ -20,7 +20,7 @@ import (
 // across a reload.
 //
 // It also holds an in-memory preview of the due list (cachedDue), rebuilt
-// by refreshPreview on its own fixed interval (see main.go's
+// by RefreshPreview on its own fixed interval (see main.go's
 // runPreviewLoop), independently of the deletion sweep. Both call the same
 // findDue, so the preview and the sweep never disagree on what counts as
 // due — the sweep simply runs its own fresh findDue rather than trusting
@@ -50,11 +50,16 @@ func (l *liveSweeper) current() *sweeper {
 	return l.cur
 }
 
-// sweep runs one deletion sweep, gated on the required services being
-// configured — reaparr stays up (so they can be configured from the
-// dashboard) but refuses to sweep until they are.
+// sweep runs one scheduled deletion sweep, gated on the daemon being
+// enabled and on the required services being configured — reaparr stays
+// up (so they can be configured from the dashboard) but refuses to sweep
+// until they are.
 func (l *liveSweeper) sweep() {
 	s := l.current()
+	if !s.daemonEnabled {
+		s.log.Info().Msg("daemon is disabled, skipping scheduled sweep — delete from the dashboard instead")
+		return
+	}
 	if missing := s.missingServices(); len(missing) > 0 {
 		s.log.Warn().Msg(fmt.Sprintf("unable to run: required services not configured: %s", strings.Join(missing, ", ")))
 		return
@@ -62,10 +67,11 @@ func (l *liveSweeper) sweep() {
 	s.sweepOnce()
 }
 
-// refreshPreview rebuilds the dashboard's in-memory due list via the same
-// findDue the sweep uses. Skipped (leaving an empty list) while required
-// services are missing — the dashboard's banner explains why.
-func (l *liveSweeper) refreshPreview() {
+// RefreshPreview implements api.Sweeper: rebuilds the dashboard's
+// in-memory due list via the same findDue the sweep uses. Skipped (leaving
+// an empty list) while required services are missing — the dashboard's
+// banner explains why.
+func (l *liveSweeper) RefreshPreview() {
 	s := l.current()
 
 	var due []dueItem
@@ -141,7 +147,52 @@ func (l *liveSweeper) Delete(jellyfinItemID string) error {
 	if !d.resolved {
 		return fmt.Errorf("'%s' has no matching radarr/sonarr entry to delete", displayTitle(d.item))
 	}
-	return s.deleteDueItem(d)
+	if err := s.deleteDueItem(d); err != nil {
+		return err
+	}
+	l.dropFromPreview(jellyfinItemID)
+	return nil
+}
+
+// DeleteAll implements api.Sweeper: a manual, on-demand sweep. Like Delete,
+// it never trusts the cached preview — it runs a fresh findDue and deletes
+// whatever qualifies right now (plus the Seerr cleanup), exactly as a
+// scheduled sweep would, regardless of whether the daemon is enabled. The
+// preview is rebuilt afterwards.
+func (l *liveSweeper) DeleteAll() (api.DeleteAllResult, error) {
+	s := l.current()
+	if missing := s.missingServices(); len(missing) > 0 {
+		return api.DeleteAllResult{}, fmt.Errorf("required services not configured: %s", strings.Join(missing, ", "))
+	}
+
+	s.log.Info().Msg("starting a manual sweep (delete all)")
+	due, err := s.findDue()
+	if err != nil {
+		return api.DeleteAllResult{}, err
+	}
+	deleted, skipped, failed := s.deleteAllDue(due)
+	l.RefreshPreview()
+
+	return api.DeleteAllResult{Deleted: deleted, Skipped: skipped, Failed: failed}, nil
+}
+
+// DaemonEnabled implements api.Sweeper.
+func (l *liveSweeper) DaemonEnabled() bool {
+	return l.current().daemonEnabled
+}
+
+// dropFromPreview removes one just-deleted item from the cached preview so
+// the dashboard doesn't keep listing it until the next refresh.
+func (l *liveSweeper) dropFromPreview(jellyfinItemID string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	kept := l.cachedDue[:0:0]
+	for _, d := range l.cachedDue {
+		if d.item.ID != jellyfinItemID {
+			kept = append(kept, d)
+		}
+	}
+	l.cachedDue = kept
 }
 
 // connectionTester implements api.ConnectionTester using one-off clients

@@ -15,6 +15,7 @@ package settings
 
 import (
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/Miista/reaparr/internal/store"
@@ -60,6 +61,12 @@ func Resolve(persisted store.Settings) Resolved {
 	apply("poll_schedule", func(v string) { r.Settings.PollSchedule = v })
 	apply("movies_grace_period", func(v string) { r.Settings.MoviesGracePeriod = v })
 	apply("tv_grace_period", func(v string) { r.Settings.TVGracePeriod = v })
+	// An unparseable value disables the daemon: failing safe means not
+	// deleting anything automatically.
+	apply("daemon_enabled", func(v string) {
+		enabled, err := strconv.ParseBool(v)
+		r.Settings.DaemonEnabled = err == nil && enabled
+	})
 
 	return r
 }

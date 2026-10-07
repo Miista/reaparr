@@ -34,13 +34,17 @@ func newFakeJellyfin(t *testing.T, cfg fakeJellyfinConfig) *jellyfinClient {
 			json.NewEncoder(w).Encode(jellyfinItemsResponse{Items: cfg.itemsByUser[userID]})
 
 		case strings.HasPrefix(r.URL.Path, "/Items/"):
-			seriesID := strings.TrimPrefix(r.URL.Path, "/Items/")
-			item, ok := cfg.seriesByID[seriesID]
-			if !ok {
-				w.WriteHeader(http.StatusNotFound)
-				return
+			// Jellyfin 12.x answers a bare single-item lookup with an
+			// API key (no user context) with 400 — mirror that so a
+			// regression back to this endpoint fails the tests.
+			w.WriteHeader(http.StatusBadRequest)
+
+		case r.URL.Path == "/Items":
+			var items []jellyfinItem
+			if item, ok := cfg.seriesByID[r.URL.Query().Get("Ids")]; ok {
+				items = append(items, item)
 			}
-			json.NewEncoder(w).Encode(item)
+			json.NewEncoder(w).Encode(jellyfinItemsResponse{Items: items})
 
 		case r.URL.Path == "/System/ActivityLog/Entries":
 			// Real Jellyfin always returns these newest-first, hardcoded
@@ -408,9 +412,11 @@ func TestSweepOnce_EpisodeIgnored_WhenSonarrNotConfigured(t *testing.T) {
 				},
 				TotalRecordCount: 1,
 			})
-		case r.URL.Path == "/Items/jf-series-1":
+		case r.URL.Path == "/Items" && r.URL.Query().Get("Ids") == "jf-series-1":
 			seriesLookupCalled = true
-			json.NewEncoder(w).Encode(jellyfinItem{ID: "jf-series-1", Type: "Series", ProviderIds: jellyfinProviders{Tvdb: "410092"}})
+			json.NewEncoder(w).Encode(jellyfinItemsResponse{Items: []jellyfinItem{
+				{ID: "jf-series-1", Type: "Series", ProviderIds: jellyfinProviders{Tvdb: "410092"}},
+			}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

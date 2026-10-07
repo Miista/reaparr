@@ -34,6 +34,20 @@ type Sweeper interface {
 	// MissingServices lists the required services that aren't configured;
 	// while non-empty, the sweep refuses to run.
 	MissingServices() []string
+	// DeleteAll re-checks everything live and deletes whatever is due right
+	// now — a manual sweep, available whether or not the daemon is enabled.
+	DeleteAll() (DeleteAllResult, error)
+	// DaemonEnabled reports whether the scheduled sweep is enabled.
+	DaemonEnabled() bool
+	// RefreshPreview rebuilds the cached due list from live data now.
+	RefreshPreview()
+}
+
+// DeleteAllResult summarises a manual delete-all run.
+type DeleteAllResult struct {
+	Deleted int `json:"deleted"`
+	Skipped int `json:"skipped"` // due, but no radarr/sonarr match
+	Failed  int `json:"failed"`
 }
 
 // DueItem is a dashboard-facing rendering of one item due for deletion.
@@ -92,6 +106,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/connections/test", s.handleTestConnection)
 	mux.HandleFunc("/api/due", s.handleDue)
 	mux.HandleFunc("/api/due/delete", s.handleDeleteDue)
+	mux.HandleFunc("/api/due/delete-all", s.handleDeleteAll)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +124,25 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if missing == nil {
 		missing = []string{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"missing_services": missing})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"missing_services": missing,
+		"daemon_enabled":   s.sweeper.DaemonEnabled(),
+	})
+}
+
+// handleDeleteAll runs a manual sweep: everything due right now (re-checked
+// live, not taken from the cached list) is deleted.
+func (s *Server) handleDeleteAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	result, err := s.sweeper.DeleteAll()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // handleSettings handles GET (current resolved settings) and POST (patch
@@ -265,6 +298,11 @@ func (s *Server) handleDue(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	// ?fresh=1 (the dashboard's Refresh button) rebuilds the list from live
+	// data first instead of serving the cached preview.
+	if r.URL.Query().Get("fresh") == "1" {
+		s.sweeper.RefreshPreview()
+	}
 	due, err := s.sweeper.FindDue()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -320,6 +358,12 @@ func applySettingsPatch(st *store.Settings, incoming map[string]any) {
 	setString("poll_schedule", &st.PollSchedule)
 	setString("movies_grace_period", &st.MoviesGracePeriod)
 	setString("tv_grace_period", &st.TVGracePeriod)
+
+	if !resolved.IsManaged("daemon_enabled") {
+		if v, ok := incoming["daemon_enabled"].(bool); ok {
+			st.DaemonEnabled = v
+		}
+	}
 }
 
 // applyConnectionsPatch applies whitelisted fields from incoming onto st.
@@ -371,6 +415,7 @@ func publicSettings(resolved settings.Resolved) map[string]any {
 			"poll_schedule":       st.PollSchedule,
 			"movies_grace_period": st.MoviesGracePeriod,
 			"tv_grace_period":     st.TVGracePeriod,
+			"daemon_enabled":      st.DaemonEnabled,
 		},
 		"env_managed": resolved.Managed,
 	}

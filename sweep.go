@@ -53,7 +53,10 @@ type sweeper struct {
 	tvGracePeriod     time.Duration
 
 	schedule cron.Schedule
-	log      zerolog.Logger
+	// daemonEnabled gates only the scheduled sweep (see liveSweeper.sweep);
+	// the preview and the dashboard's delete buttons work either way.
+	daemonEnabled bool
+	log           zerolog.Logger
 }
 
 func (s *sweeper) run(ctx context.Context) {
@@ -107,15 +110,16 @@ func (s *sweeper) missingServices() []string {
 	return missing
 }
 
-// deleteAllDue runs the delete pass over an already-computed due list.
-func (s *sweeper) deleteAllDue(due []dueItem) {
+// deleteAllDue runs the delete pass over an already-computed due list,
+// returning how many items were deleted, skipped (no radarr/sonarr match)
+// and failed.
+func (s *sweeper) deleteAllDue(due []dueItem) (cleaned, skipped, failed int) {
 	if len(due) == 0 {
 		s.log.Info().Msg("sweep finished: nothing due for deletion")
 		s.cleanUpSeerr()
-		return
+		return 0, 0, 0
 	}
 
-	var cleaned, skipped, failed int
 	for _, d := range due {
 		if !d.resolved {
 			s.log.Warn().Msg(fmt.Sprintf("'%s' is watched and past its grace period, but radarr/sonarr doesn't know about it — nothing to delete, skipping", displayTitle(d.item)))
@@ -133,6 +137,7 @@ func (s *sweeper) deleteAllDue(due []dueItem) {
 	s.log.Info().Msg(fmt.Sprintf("sweep finished: %d due, %d deleted, %d skipped, %d failed", len(due), cleaned, skipped, failed))
 
 	s.cleanUpSeerr()
+	return cleaned, skipped, failed
 }
 
 // dueItem is one Jellyfin item that is both currently played and past its

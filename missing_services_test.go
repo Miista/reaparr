@@ -1,9 +1,38 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"sync/atomic"
 	"testing"
 )
+
+// A disabled daemon must not touch any service on its scheduled sweep,
+// even with everything configured.
+func TestSweep_DaemonDisabled_MakesNoRequests(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	live := &liveSweeper{}
+	live.set(&sweeper{
+		jellyfin:      &jellyfinClient{baseURL: srv.URL, apiKey: "k", httpClient: srv.Client(), log: testLogger(t)},
+		arr:           &arrClient{radarrURL: srv.URL, radarrAPIKey: "k", httpClient: srv.Client(), log: testLogger(t)},
+		seerr:         &seerrClient{baseURL: srv.URL, apiKey: "k", httpClient: srv.Client(), log: testLogger(t)},
+		daemonEnabled: false,
+		log:           testLogger(t),
+	})
+
+	live.sweep()
+
+	if n := hits.Load(); n != 0 {
+		t.Errorf("disabled daemon made %d requests, want 0", n)
+	}
+}
 
 func TestMissingServices(t *testing.T) {
 	configured := func() *sweeper {

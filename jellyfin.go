@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -133,12 +134,18 @@ func (c *jellyfinClient) playedItems(userID string) ([]jellyfinItem, error) {
 // series'. Sonarr tracks/deletes at the series level, so this is the ID
 // that actually matters for matching.
 func (c *jellyfinClient) seriesTvdbID(seriesID string) (string, error) {
-	path := fmt.Sprintf("/Items/%s?Fields=ProviderIds", seriesID)
-	var item jellyfinItem
-	if err := c.get(path, &item); err != nil {
+	// The /Items query endpoint filtered by Ids, not /Items/{id}: Jellyfin
+	// 12.x rejects the single-item path with 400 when called with an API key
+	// and no user context.
+	path := fmt.Sprintf("/Items?Ids=%s&Fields=ProviderIds", url.QueryEscape(seriesID))
+	var resp jellyfinItemsResponse
+	if err := c.get(path, &resp); err != nil {
 		return "", err
 	}
-	return item.ProviderIds.Tvdb, nil
+	if len(resp.Items) == 0 {
+		return "", fmt.Errorf("jellyfin returned no series with id %s", seriesID)
+	}
+	return resp.Items[0].ProviderIds.Tvdb, nil
 }
 
 // latestStopEvents returns, for every item with at least one

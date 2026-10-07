@@ -22,7 +22,7 @@ body {
   margin: 0;
 }
 
-.banner-warning {
+.banner-warning, .banner-info {
   border: 1px solid var(--yellow);
   border-radius: 6px;
   color: var(--yellow);
@@ -31,7 +31,9 @@ body {
   padding: 10px 14px;
 }
 
-.banner-warning a { color: inherit; margin-left: 8px; }
+.banner-info { border-color: var(--accent); color: var(--accent); }
+
+.banner-warning a, .banner-info a { color: inherit; margin-left: 8px; }
 
 .topbar {
   display: flex;

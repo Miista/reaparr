@@ -74,7 +74,7 @@ func main() {
 	// without waiting for the next preview tick.
 	reloadAndRefresh := func() {
 		reload()
-		go live.refreshPreview()
+		go live.RefreshPreview()
 	}
 
 	apiServer := api.New(st, live, tester, reloadAndRefresh, logger)
@@ -114,9 +114,9 @@ const previewRefreshInterval = 15 * time.Minute
 
 // runPreviewLoop rebuilds the dashboard's due-list preview immediately on
 // startup and then every previewRefreshInterval, independently of the
-// deletion sweep's schedule (see liveSweeper.refreshPreview).
+// deletion sweep's schedule (see liveSweeper.RefreshPreview).
 func runPreviewLoop(ctx context.Context, live *liveSweeper) {
-	live.refreshPreview()
+	live.RefreshPreview()
 
 	ticker := time.NewTicker(previewRefreshInterval)
 	defer ticker.Stop()
@@ -125,7 +125,7 @@ func runPreviewLoop(ctx context.Context, live *liveSweeper) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			live.refreshPreview()
+			live.RefreshPreview()
 		}
 	}
 }
@@ -210,6 +210,7 @@ func buildSweeper(st *store.Store, httpClient *http.Client, logger zerolog.Logge
 		moviesGracePeriod: moviesGrace,
 		tvGracePeriod:     tvGrace,
 		schedule:          schedule,
+		daemonEnabled:     cfg.DaemonEnabled,
 		log:               withComponent(logger, "sweep"),
 	}
 }
