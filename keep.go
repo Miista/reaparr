@@ -131,6 +131,11 @@ type libraryItem struct {
 	title   string
 	year    int
 	kept    bool
+	// watch describes what unkeeping would do: "due" (watched and past its
+	// grace period — the scheduled run would delete it), "waiting" (watched,
+	// within its grace period), "unwatched", or "" if it couldn't be checked.
+	// For a series it reflects its most advanced season.
+	watch string
 }
 
 // libraryItems lists every movie and series in Radarr/Sonarr, live — the
@@ -159,7 +164,39 @@ func (s *sweeper) libraryItems() ([]libraryItem, error) {
 			out = append(out, libraryItem{service: serviceSonarr, id: sr.ID, title: sr.Title, year: sr.Year, kept: hasTag(sr.Tags, tags.sonarr)})
 		}
 	}
+	s.annotateWatch(out)
 	return out, nil
+}
+
+// annotateWatch fills in libraryItem.watch by running the due computation
+// with the keep tag ignored. Best effort: if Jellyfin can't be read, watch
+// stays "" and the dashboard falls back to a cautious confirmation.
+func (s *sweeper) annotateWatch(items []libraryItem) {
+	candidates, err := s.collectCandidates(true)
+	if err != nil {
+		s.log.Warn().Msg(fmt.Sprintf("could not check watched state for the library: %v", err))
+		return
+	}
+	state := map[string]string{}
+	for _, d := range candidates {
+		ref := arrRef(d)
+		if ref.service == "" {
+			continue
+		}
+		key := fmt.Sprintf("%s:%d", ref.service, ref.id)
+		if d.due {
+			state[key] = "due"
+		} else if state[key] == "" {
+			state[key] = "waiting"
+		}
+	}
+	for i := range items {
+		w, ok := state[fmt.Sprintf("%s:%d", items[i].service, items[i].id)]
+		if !ok {
+			w = "unwatched"
+		}
+		items[i].watch = w
+	}
 }
 
 // setKept adds (keep=true) or removes the keep tag on Radarr movies /

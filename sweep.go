@@ -187,6 +187,13 @@ func (s *sweeper) findDue() ([]dueItem, error) {
 // cron sweep, the dashboard preview, and a re-verify before a manual delete
 // all go through it, never two algorithms that could silently disagree.
 func (s *sweeper) findCandidates() ([]dueItem, error) {
+	return s.collectCandidates(false)
+}
+
+// collectCandidates is findCandidates, optionally ignoring the keep tag.
+// ignoreKeep is ONLY for describing what unkeeping would do (see
+// libraryItems) — never for anything that deletes.
+func (s *sweeper) collectCandidates(ignoreKeep bool) ([]dueItem, error) {
 	safety := s.checkHardlinkSafety()
 
 	latestStop, err := s.jellyfin.latestStopEvents()
@@ -209,6 +216,9 @@ func (s *sweeper) findCandidates() ([]dueItem, error) {
 	if err != nil {
 		s.log.Error().Msg(fmt.Sprintf("could not read the keep tag this sweep, will try again next time: %v", err))
 		return nil, err
+	}
+	if ignoreKeep {
+		keep = keepTagIDs{}
 	}
 
 	now := time.Now().UTC()

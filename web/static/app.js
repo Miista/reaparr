@@ -92,6 +92,8 @@ function App() {
     connectionsError: '',
 
     async mounted() {
+      this.applyRoute(true);
+      window.addEventListener('hashchange', () => this.applyRoute());
       setInterval(() => { this.now = Date.now(); }, 30000);
       document.addEventListener('keydown', (e) => this.onDialogKey(e));
       await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections(), this.loadLibrary()]);
@@ -337,9 +339,23 @@ function App() {
       });
     },
 
-    openLibrary() {
-      this.tab = 'library';
-      this.loadLibrary();
+    // --- Routing ----------------------------------------------------------
+    // The current page lives in the URL hash (#/due, #/library,
+    // #/settings/general, #/settings/connections), so a refresh, a
+    // bookmark or the back button lands on the same page.
+
+    applyRoute(initial = false) {
+      const [tab, sub] = location.hash.replace(/^#\/?/, '').split('/');
+      if (tab === 'library' || tab === 'settings') {
+        this.tab = tab;
+      } else {
+        this.tab = 'due';
+      }
+      if (tab === 'settings') {
+        this.settingsTab = sub === 'connections' ? 'connections' : 'general';
+      }
+      // Entering the Library re-reads it live (mounted already loads it once).
+      if (this.tab === 'library' && !initial) this.loadLibrary();
     },
 
     async loadLibrary() {
@@ -357,14 +373,25 @@ function App() {
       }
     },
 
-    // A single Keep needs no confirmation (it only protects); unkeeping does.
+    // One click either way — except unkeeping something the scheduled run
+    // would then delete: watched and past its grace period ("due"), or
+    // unknown because Jellyfin couldn't be checked. With the daemon off
+    // nothing is deleted automatically, so no confirmation is needed.
     async toggleKeep(it) {
-      if (it.kept && !await this.ask({
-        title: `Stop keeping ${it.title}?`,
-        message: 'It can be deleted again once watched.',
-        confirmLabel: 'Unkeep',
-        tone: 'neutral',
-      })) return;
+      if (it.kept && this.daemonEnabled && (it.watch === 'due' || !it.watch)) {
+        const when = this.nextRun
+          ? `in ${humanCountdown(Math.max(60, (new Date(this.nextRun) - Date.now()) / 1000))}`
+          : 'soon';
+        const ok = await this.ask({
+          title: `Unkeep ${it.title}?`,
+          message: it.watch === 'due'
+            ? `It's watched and past its grace period, so the next scheduled run (${when}) will delete it.`
+            : `Reaparr couldn't check whether it's watched. If it is and its grace period has passed, the next scheduled run (${when}) will delete it.`,
+          confirmLabel: 'Unkeep',
+          tone: 'danger',
+        });
+        if (!ok) return;
+      }
       await this.setKept([it], !it.kept);
     },
 

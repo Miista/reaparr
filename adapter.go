@@ -321,7 +321,7 @@ func (l *liveSweeper) Library() ([]api.LibraryItem, error) {
 		if it.service == serviceSonarr {
 			kind = "series"
 		}
-		out = append(out, api.LibraryItem{Service: string(it.service), ID: it.id, Title: it.title, Year: it.year, Kind: kind, Kept: it.kept})
+		out = append(out, api.LibraryItem{Service: string(it.service), ID: it.id, Title: it.title, Year: it.year, Kind: kind, Kept: it.kept, Watch: it.watch})
 	}
 	return out, nil
 }

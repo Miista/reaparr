@@ -69,6 +69,9 @@ type LibraryItem struct {
 	Year    int    `json:"year"`
 	Kind    string `json:"kind"` // "movie" or "series"
 	Kept    bool   `json:"kept"` // carries the keep tag: never deleted
+	// Watch is what unkeeping would do: "due" (would be deleted on the next
+	// scheduled run), "waiting", "unwatched", or "" if unknown.
+	Watch string `json:"watch"`
 }
 
 // LibraryRef identifies a Radarr movie / Sonarr series.
