@@ -354,7 +354,7 @@ h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
 .field-help { font-size: 13px; color: var(--faint); margin: 0; text-wrap: pretty; }
 
 .input {
-  font-family: var(--mono); font-size: 14px; padding: 12px 14px; border-radius: 10px;
+  font-family: var(--mono); font-size: 16px; padding: 12px 14px; border-radius: 10px;
   border: 1px solid var(--border-2); background: var(--field); color: var(--text); outline: none; min-width: 0; width: 100%;
 }
 .input:focus { border-color: oklch(0.65 0.2 290); box-shadow: 0 0 0 4px oklch(0.6 0.2 290 / .2); }
@@ -380,7 +380,7 @@ h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
 }
 .cron-box.invalid { border-color: oklch(0.55 0.15 25 / .7); }
 .cron-box.locked { border-color: oklch(0.45 0.08 80 / .5); background: oklch(0.2 0.02 80 / .4); }
-.cron-box input { flex: 1; min-width: 140px; font-family: var(--mono); font-size: 14px; padding: 6px 0; border: none; background: transparent; color: var(--text); outline: none; }
+.cron-box input { flex: 1; min-width: 140px; font-family: var(--mono); font-size: 16px; padding: 6px 0; border: none; background: transparent; color: var(--text); outline: none; }
 .cron-box input[readonly] { color: #a9abb8; }
 .cron-pill { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 7px; font-size: 13px; font-weight: 500; white-space: nowrap; background: oklch(0.3 0.08 200 / .4); color: oklch(0.8 0.12 200); }
 .cron-pill.invalid { background: oklch(0.3 0.09 25 / .5); color: var(--red-text); }
