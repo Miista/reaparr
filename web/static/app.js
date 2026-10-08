@@ -156,7 +156,7 @@ function App() {
       if (this.missingServices.length) return { label: 'Not running', cls: 'stopped' };
       if (this.problems.length) return { label: 'Connection problem', cls: 'stopped' };
       if (!this.daemonEnabled) return { label: 'Manual only', cls: 'manual' };
-      return { label: 'Running', cls: 'running' };
+      return { label: 'Scheduled', cls: 'running' };
     },
 
     // --- Due for deletion -----------------------------------------------
