@@ -200,7 +200,12 @@ func (s *sweeper) findCandidates() ([]dueItem, error) {
 func (s *sweeper) collectCandidates(ignoreKeep bool) ([]dueItem, error) {
 	safety := s.checkHardlinkSafety()
 
-	latestStop, err := s.jellyfin.latestStopEvents()
+	allowed, err := s.allowedUserIDs()
+	if err != nil {
+		s.log.Error().Msg(fmt.Sprintf("could not resolve the configured jellyfin users this sweep, will try again next time: %v", err))
+		return nil, err
+	}
+	latestStop, err := s.jellyfin.latestStopEvents(allowed)
 	if err != nil {
 		s.log.Error().Msg(fmt.Sprintf("could not read jellyfin's activity log this sweep, will try again next time: %v", err))
 		return nil, err
@@ -418,6 +423,27 @@ func (s *sweeper) filterUsers(users []jellyfinUser) ([]jellyfinUser, error) {
 		return nil, fmt.Errorf("none of the configured jellyfin users (%s) exist — refusing to fall back to all users", strings.Join(s.jellyfinUsers, ", "))
 	}
 	return kept, nil
+}
+
+// allowedUserIDs is the set of normalized IDs of the users that count, or
+// nil when no filter is configured (every user counts).
+func (s *sweeper) allowedUserIDs() (map[string]bool, error) {
+	if len(s.jellyfinUsers) == 0 {
+		return nil, nil
+	}
+	users, err := s.jellyfin.users()
+	if err != nil {
+		return nil, err
+	}
+	users, err = s.filterUsers(users)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[string]bool, len(users))
+	for _, u := range users {
+		ids[normalizeUserID(u.ID)] = true
+	}
+	return ids, nil
 }
 
 // parseUserList splits a comma-separated user list, dropping blanks.

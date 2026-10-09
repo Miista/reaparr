@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -69,7 +70,15 @@ type jellyfinItemsResponse struct {
 type jellyfinActivityEntry struct {
 	Type   string    `json:"Type"`
 	ItemID string    `json:"ItemId"`
+	UserID string    `json:"UserId"`
 	Date   time.Time `json:"Date"`
+}
+
+// normalizeUserID makes Jellyfin's two GUID spellings (with and without
+// dashes, any case) comparable: /Users and the activity log don't always
+// agree on the format.
+func normalizeUserID(id string) string {
+	return strings.ToLower(strings.ReplaceAll(id, "-", ""))
 }
 
 type jellyfinActivityResponse struct {
@@ -187,7 +196,12 @@ func (c *jellyfinClient) seriesTvdbID(seriesID string) (string, error) {
 // not just current upstream docs) has no server-side event-type or
 // max-date filter on the Activity Log endpoint, so this fetches the whole
 // log and filters by type client-side.
-func (c *jellyfinClient) latestStopEvents() (map[string]time.Time, error) {
+//
+// allowedUsers, when non-nil, restricts this to stop events by those users
+// (normalized IDs — see normalizeUserID): an excluded user's playback must
+// not influence an item's timestamp. Events with no user are dropped when
+// a filter is active. nil means every user.
+func (c *jellyfinClient) latestStopEvents(allowedUsers map[string]bool) (map[string]time.Time, error) {
 	latestStop := make(map[string]time.Time)
 	seenItem := make(map[string]bool)
 
@@ -204,6 +218,11 @@ func (c *jellyfinClient) latestStopEvents() (map[string]time.Time, error) {
 				continue
 			}
 			if e.ItemID == "" || seenItem[e.ItemID] {
+				continue
+			}
+			// Skipped before seenItem is set, so an excluded user's newer
+			// event doesn't shadow an allowed user's older one.
+			if allowedUsers != nil && !allowedUsers[normalizeUserID(e.UserID)] {
 				continue
 			}
 			seenItem[e.ItemID] = true

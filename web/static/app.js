@@ -92,13 +92,16 @@ function App() {
     connStatus: {}, // service -> { status: idle|testing|ok|fail, msg }
     connectionsSavedAt: null,
     connectionsError: '',
+    jellyfinUsers: [], // accounts on the Jellyfin server, for the Watchers picker
+    jellyfinUsersLoading: false,
+    jellyfinUsersError: '',
 
     async mounted() {
       this.applyRoute(true);
       window.addEventListener('hashchange', () => this.applyRoute());
       setInterval(() => { this.now = Date.now(); }, 30000);
       document.addEventListener('keydown', (e) => this.onDialogKey(e));
-      await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections(), this.loadLibrary()]);
+      await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections(), this.loadLibrary(), this.loadJellyfinUsers()]);
       this.testConfiguredConnections();
       // Only now — with status and connections loaded and the tests started
       // (they count as pending until done) — can problems be judged.
@@ -609,6 +612,49 @@ function App() {
       if (!res.ok) return;
       this.settings = await res.json();
       this.savedSettings = this.snapshotSettings();
+    },
+
+    async loadJellyfinUsers() {
+      this.jellyfinUsersLoading = true;
+      this.jellyfinUsersError = '';
+      try {
+        const res = await fetch('/api/jellyfin/users');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Failed to load Jellyfin users.');
+        this.jellyfinUsers = (data.users || []).sort((a, b) => a.name.localeCompare(b.name));
+      } catch (err) {
+        this.jellyfinUsersError = err.message;
+      } finally {
+        this.jellyfinUsersLoading = false;
+      }
+    },
+
+    // The jellyfin_users setting is a comma-separated list of usernames or
+    // IDs. The picker stores IDs (stable across renames) but recognises
+    // either form, and leaves entries it can't match to a user untouched.
+    userTokens() {
+      return (this.settings.values.jellyfin_users || '').split(',').map((t) => t.trim()).filter(Boolean);
+    },
+
+    tokenIsUser(token, u) {
+      const t = token.toLowerCase();
+      return t === u.id.toLowerCase() || t === u.name.toLowerCase();
+    },
+
+    userSelected(u) {
+      return this.userTokens().some((t) => this.tokenIsUser(t, u));
+    },
+
+    toggleUser(u) {
+      if (this.settings.env_managed.jellyfin_users) return;
+      const rest = this.userTokens().filter((t) => !this.tokenIsUser(t, u));
+      if (!this.userSelected(u)) rest.push(u.id);
+      this.settings.values.jellyfin_users = rest.join(', ');
+    },
+
+    // Listed entries that match no account on the server.
+    get unknownUserTokens() {
+      return this.userTokens().filter((t) => !this.jellyfinUsers.some((u) => this.tokenIsUser(t, u)));
     },
 
     discardSettings() {

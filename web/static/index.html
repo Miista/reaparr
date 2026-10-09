@@ -264,13 +264,19 @@
           </div>
         </div>
         <div class="card-grid">
-          <label class="field">
+          <div class="field">
             <span class="field-label">Jellyfin users
               <span class="lock-label" v-if="settings.env_managed.jellyfin_users"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ settings.env_managed.jellyfin_users }}</span>
             </span>
-            <input class="input" v-model="settings.values.jellyfin_users" :readonly="settings.env_managed.jellyfin_users ? true : null" placeholder="alice, bob">
-            <span class="field-help">Comma-separated usernames or user IDs. If any one of them has watched something, it counts. If none of the names exist, nothing is deleted.</span>
-          </label>
+            <div class="chips">
+              <button v-for="u in jellyfinUsers" :key="u.id" type="button" class="chip" :class="{ on: userSelected(u) }" :disabled="settings.env_managed.jellyfin_users ? true : null" @click="toggleUser(u)">{{ u.name }}</button>
+              <span class="field-help" v-if="jellyfinUsersLoading">Loading users…</span>
+            </div>
+            <span class="field-help" v-if="jellyfinUsersError">{{ jellyfinUsersError }} <a href="#" @click.prevent="loadJellyfinUsers()">Retry</a></span>
+            <span class="field-help" v-else-if="!settings.values.jellyfin_users">Nobody selected: every user counts.</span>
+            <span class="field-help" v-else>Only the selected users count — their watches and playback events. If any one of them has watched something, it counts.</span>
+            <span class="field-help" v-if="unknownUserTokens.length">Not found on the server: {{ unknownUserTokens.join(', ') }}. If none of the listed users exist, nothing is deleted.</span>
+          </div>
         </div>
       </section>
 

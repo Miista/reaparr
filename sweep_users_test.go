@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func userFilterFixture(t *testing.T) *jellyfinClient {
 	t.Helper()
@@ -65,6 +68,36 @@ func TestCurrentlyPlayedItems_UnknownUsersOnlyErrors(t *testing.T) {
 
 	if _, err := sw.currentlyPlayedItems(); err == nil {
 		t.Fatal("expected an error rather than a fallback to all users")
+	}
+}
+
+// An excluded user's playback must not touch an item's timestamp: C's newer
+// stop event can't shadow A's, and an item only C stopped has no event.
+func TestLatestStopEvents_IgnoresExcludedUsers(t *testing.T) {
+	now := time.Now().UTC()
+	jf := newFakeJellyfin(t, fakeJellyfinConfig{
+		activityEntries: []jellyfinActivityEntry{
+			{Type: "VideoPlaybackStopped", ItemID: "shared", UserID: "uc", Date: now.Add(-1 * time.Hour)},
+			// Dashed + upper-case, as the activity log may spell /Users' "ua".
+			{Type: "VideoPlaybackStopped", ItemID: "shared", UserID: "U-A", Date: now.Add(-48 * time.Hour)},
+			{Type: "VideoPlaybackStopped", ItemID: "only-c", UserID: "uc", Date: now.Add(-2 * time.Hour)},
+		},
+	})
+
+	got, err := jf.latestStopEvents(map[string]bool{normalizeUserID("ua"): true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got["shared"].Equal(now.Add(-48*time.Hour)) {
+		t.Fatalf("expected only A's event for 'shared', got %v", got)
+	}
+
+	all, err := jf.latestStopEvents(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || !all["shared"].Equal(now.Add(-1*time.Hour)) {
+		t.Fatalf("nil filter should include everyone, got %v", all)
 	}
 }
 

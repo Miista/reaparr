@@ -51,6 +51,9 @@ type Sweeper interface {
 	RefreshPreview()
 	// Library lists every movie and series in Radarr/Sonarr.
 	Library() ([]LibraryItem, error)
+	// JellyfinUsers lists the accounts on the Jellyfin server, for the
+	// dashboard's user picker.
+	JellyfinUsers() ([]JellyfinUser, error)
 	// SetKept keeps (keep=true) or unkeeps Radarr movies / Sonarr series.
 	SetKept(refs []LibraryRef, keep bool) error
 	// Poster returns a movie's / series' small poster image.
@@ -68,6 +71,12 @@ type LibraryItem struct {
 	// Watch is what unkeeping would do: "due" (would be deleted on the next
 	// scheduled run), "waiting", "unwatched", or "" if unknown.
 	Watch string `json:"watch"`
+}
+
+// JellyfinUser is one Jellyfin account, as offered by the user picker.
+type JellyfinUser struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // LibraryRef identifies a Radarr movie / Sonarr series.
@@ -148,6 +157,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/due/delete-selected", s.handleDeleteSelected)
 	mux.HandleFunc("/api/library", s.handleLibrary)
 	mux.HandleFunc("/api/library/keep", s.handleLibraryKeep)
+	mux.HandleFunc("/api/jellyfin/users", s.handleJellyfinUsers)
 	mux.HandleFunc("/api/poster/", s.handlePoster)
 }
 
@@ -220,6 +230,20 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// handleJellyfinUsers lists the Jellyfin accounts for the user picker.
+func (s *Server) handleJellyfinUsers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	users, err := s.sweeper.JellyfinUsers()
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"users": users})
 }
 
 // handleLibraryKeep keeps or unkeeps library items.

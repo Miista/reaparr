@@ -248,6 +248,19 @@ func (l *liveSweeper) Poster(service string, id int) (io.ReadCloser, string, err
 	return l.current().arr.poster(svc, id)
 }
 
+// JellyfinUsers implements api.Sweeper.
+func (l *liveSweeper) JellyfinUsers() ([]api.JellyfinUser, error) {
+	users, err := l.current().jellyfin.users()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.JellyfinUser, 0, len(users))
+	for _, u := range users {
+		out = append(out, api.JellyfinUser{ID: u.ID, Name: u.Name})
+	}
+	return out, nil
+}
+
 // Library implements api.Sweeper: every movie and series in Radarr/Sonarr,
 // with whether each is kept.
 func (l *liveSweeper) Library() ([]api.LibraryItem, error) {
