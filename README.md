@@ -288,7 +288,14 @@ pre-dashboard deployment style.
 ```sh
 go test ./... -race
 go build .
-docker build -t reaparr .
+```
+
+The image just copies in a pre-built binary, so cross-compile it with Go
+first (use `arm64` instead of `amd64` for an ARM host):
+
+```sh
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/linux/amd64/reaparr .
+docker build --platform linux/amd64 -t reaparr .
 ```
 
 ## See also

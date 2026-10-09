@@ -44,7 +44,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Cross-compile natively with Go; the Dockerfile only copies these in,
+      # so no QEMU emulation is needed for the arm64 image.
+      - name: Cross-compile
+        run: |
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -trimpath -o dist/linux/$arch/reaparr .
+          done
 
       - uses: docker/setup-buildx-action@v3
 

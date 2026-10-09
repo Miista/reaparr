@@ -1,11 +1,8 @@
-FROM golang:1.26-alpine AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -o /reaparr .
-
+# The binary is cross-compiled with Go beforehand (see the CI workflow and the
+# README's Development section) and copied in, so building the image never
+# compiles anything — and never needs QEMU emulation for the other platform.
 FROM gcr.io/distroless/static-debian12
+ARG TARGETARCH
 WORKDIR /
-COPY --from=build /reaparr /reaparr
+COPY dist/linux/${TARGETARCH}/reaparr /reaparr
 ENTRYPOINT ["/reaparr"]
