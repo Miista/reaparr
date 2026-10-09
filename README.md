@@ -177,6 +177,7 @@ setting's key upper-cased, with `.` replaced by `_`.
 | `REAPARR_SETTING_POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
 | `REAPARR_SETTING_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 | `REAPARR_SETTING_KEEP_TAG` | `reaparr-keep` | Radarr/Sonarr tag marking keepers — see "Keepers" below |
+| `REAPARR_SETTING_JELLYFIN_USERS` | — (everyone) | Comma-separated Jellyfin usernames or user IDs whose watched state counts — both their played items and their playback events. Any one listed user having watched something is enough. Empty means every user. If none of the listed users exist, sweeps are skipped rather than falling back to everyone. Also settable from the dashboard's Watchers card |
 | `REAPARR_SETTING_DAEMON_ENABLED` | `true` | Whether the scheduled sweep deletes automatically. When `false`, nothing is deleted on schedule — the dashboard still lists what's ripe for deletion and you delete from there. An unparseable value counts as `false` |
 
 Both grace-period variables accept Go duration strings (`36h`, `168h`,
