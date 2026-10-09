@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -59,7 +60,10 @@ type sweeper struct {
 	daemonEnabled bool
 	// keepTag is the Radarr/Sonarr tag marking keepers (see keep.go).
 	keepTag string
-	log     zerolog.Logger
+	// jellyfinUsers restricts whose played state counts (usernames or IDs,
+	// matched case-insensitively). Empty means every user.
+	jellyfinUsers []string
+	log           zerolog.Logger
 }
 
 func (s *sweeper) run(ctx context.Context) {
@@ -386,11 +390,56 @@ func (s *sweeper) gracePeriodFor(item jellyfinItem) time.Duration {
 	return s.moviesGracePeriod
 }
 
+// filterUsers narrows users to those named in s.jellyfinUsers (by name or
+// ID). With no filter configured it returns everyone. Listed entries that
+// match nobody are warned about; if none match at all it errors, so the
+// sweep is skipped rather than silently widening to every user.
+func (s *sweeper) filterUsers(users []jellyfinUser) ([]jellyfinUser, error) {
+	if len(s.jellyfinUsers) == 0 {
+		return users, nil
+	}
+	matched := make(map[string]bool)
+	var kept []jellyfinUser
+	for _, u := range users {
+		for _, want := range s.jellyfinUsers {
+			if strings.EqualFold(want, u.Name) || strings.EqualFold(want, u.ID) {
+				matched[want] = true
+				kept = append(kept, u)
+				break
+			}
+		}
+	}
+	for _, want := range s.jellyfinUsers {
+		if !matched[want] {
+			s.log.Warn().Msg(fmt.Sprintf("configured jellyfin user %q does not exist, ignoring", want))
+		}
+	}
+	if len(kept) == 0 {
+		return nil, fmt.Errorf("none of the configured jellyfin users (%s) exist — refusing to fall back to all users", strings.Join(s.jellyfinUsers, ", "))
+	}
+	return kept, nil
+}
+
+// parseUserList splits a comma-separated user list, dropping blanks.
+func parseUserList(raw string) []string {
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // currentlyPlayedItems returns every movie/episode any user currently has
 // marked played. Always live — see the sweeper doc comment on why nothing
 // here is cached across sweeps.
 func (s *sweeper) currentlyPlayedItems() ([]jellyfinItem, error) {
 	users, err := s.jellyfin.users()
+	if err != nil {
+		return nil, err
+	}
+	users, err = s.filterUsers(users)
 	if err != nil {
 		return nil, err
 	}

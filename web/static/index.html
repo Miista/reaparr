@@ -254,6 +254,26 @@
         </div>
       </section>
 
+      <section class="card" style="--hue: 330">
+        <div class="accent"></div>
+        <div class="card-head">
+          <div class="card-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10" cy="7" r="3.2"></circle><path d="M3.5 17c.8-3.2 3.3-5 6.5-5s5.7 1.8 6.5 5"></path></svg></div>
+          <div class="card-text">
+            <h2>Watchers</h2>
+            <p>Only these Jellyfin users' watched state counts. Leave empty to include everyone.</p>
+          </div>
+        </div>
+        <div class="card-grid">
+          <label class="field">
+            <span class="field-label">Jellyfin users
+              <span class="lock-label" v-if="settings.env_managed.jellyfin_users"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ settings.env_managed.jellyfin_users }}</span>
+            </span>
+            <input class="input" v-model="settings.values.jellyfin_users" :readonly="settings.env_managed.jellyfin_users ? true : null" placeholder="alice, bob">
+            <span class="field-help">Comma-separated usernames or user IDs. If any one of them has watched something, it counts. If none of the names exist, nothing is deleted.</span>
+          </label>
+        </div>
+      </section>
+
       <section class="card" style="--hue: 290">
         <div class="accent"></div>
         <div class="card-head solo">

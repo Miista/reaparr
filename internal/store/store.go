@@ -28,6 +28,9 @@ type Settings struct {
 	// KeepTag is the Radarr/Sonarr tag that marks a movie or series as a
 	// keeper: reaparr never deletes anything carrying it.
 	KeepTag string `json:"keep_tag"`
+	// JellyfinUsers limits whose watched state counts: a comma-separated
+	// list of Jellyfin usernames or user IDs. Empty means every user.
+	JellyfinUsers string `json:"jellyfin_users"`
 }
 
 // DefaultSettings mirrors config.go's own defaults, so a fresh install's

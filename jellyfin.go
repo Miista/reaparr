@@ -11,10 +11,9 @@ import (
 )
 
 // jellyfinClient polls Jellyfin for played items and playback-stopped
-// activity. Auto-discovers users via /Users rather than requiring a
-// configured list — any one account's played state is sufficient (see
-// sweep.go), so there is no meaningful subset of users to exclude in a
-// multi-user deployment.
+// activity. Auto-discovers users via /Users; which of them count is decided
+// by the jellyfin_users setting (see sweeper.currentlyPlayedItems). Any one
+// counted account's played state is sufficient.
 type jellyfinClient struct {
 	baseURL    string
 	apiKey     string

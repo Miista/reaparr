@@ -506,6 +506,7 @@ func applySettingsPatch(st *store.Settings, incoming map[string]any) {
 	setString("movies_grace_period", &st.MoviesGracePeriod)
 	setString("tv_grace_period", &st.TVGracePeriod)
 	setString("keep_tag", &st.KeepTag)
+	setString("jellyfin_users", &st.JellyfinUsers)
 
 	if !resolved.IsManaged("daemon_enabled") {
 		if v, ok := incoming["daemon_enabled"].(bool); ok {
@@ -565,6 +566,7 @@ func publicSettings(resolved settings.Resolved) map[string]any {
 			"tv_grace_period":     st.TVGracePeriod,
 			"daemon_enabled":      st.DaemonEnabled,
 			"keep_tag":            st.KeepTag,
+			"jellyfin_users":      st.JellyfinUsers,
 		},
 		"env_managed": resolved.Managed,
 	}

@@ -5,7 +5,7 @@ const SERVICES = [
   { id: 'sonarr', name: 'Sonarr', hue: 200, required: false, desc: 'Leave blank for a movie-only deployment. At least one of Radarr/Sonarr must be configured.' },
 ];
 
-const SETTINGS_KEYS = ['movies_grace_period', 'tv_grace_period', 'poll_schedule', 'log_level', 'daemon_enabled', 'keep_tag'];
+const SETTINGS_KEYS = ['movies_grace_period', 'tv_grace_period', 'poll_schedule', 'log_level', 'daemon_enabled', 'keep_tag', 'jellyfin_users'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const pad = (n) => String(n).padStart(2, '0');
 
