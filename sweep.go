@@ -343,7 +343,34 @@ func (s *sweeper) deleteDueItem(d dueItem) error {
 	}
 
 	s.log.Info().Msg(fmt.Sprintf("deleted '%s'", d.title))
+	if d.kind == kindMovie {
+		s.clearSeerrMovie(d.movie)
+	}
 	return nil
+}
+
+// clearSeerrMovie deletes a just-reaped movie's Seerr media record (what
+// Seerr's own "Clear Data" button does), which removes its requests too and
+// lets the title be requested again. Best effort: the Radarr delete already
+// succeeded, and cleanUpSeerr's query-based pass catches anything missed
+// here, so a failure is only logged.
+func (s *sweeper) clearSeerrMovie(m radarrMovie) {
+	if s.seerr == nil || !s.seerr.hasSeerr() {
+		return
+	}
+	mediaID, found, err := s.seerr.movieMediaID(m.TmdbID)
+	if err != nil {
+		s.log.Warn().Msg(fmt.Sprintf("could not look up '%s' in seerr, the next cleanup pass will catch it: %v", m.Title, err))
+		return
+	}
+	if !found {
+		return
+	}
+	if err := s.seerr.deleteMedia(mediaID); err != nil {
+		s.log.Warn().Msg(fmt.Sprintf("could not clear seerr's data for '%s' (media id %d), the next cleanup pass will retry: %v", m.Title, mediaID, err))
+		return
+	}
+	s.log.Info().Msg(fmt.Sprintf("cleared seerr's request data for '%s' (media id %d)", m.Title, mediaID))
 }
 
 // cleanUpSeerr deletes Seerr media records whose title has already been

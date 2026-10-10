@@ -131,6 +131,25 @@ func (c *seerrClient) titleFor(m seerrMedia) (string, error) {
 	return titled.Name, nil
 }
 
+// movieMediaID returns the id of Seerr's media record for a movie, from
+// GET /api/v1/movie/{tmdbId}'s nested mediaInfo. found=false means Seerr
+// has no record for it (never requested or scanned), so there is nothing
+// to clear.
+func (c *seerrClient) movieMediaID(tmdbID int) (id int, found bool, err error) {
+	var movie struct {
+		MediaInfo *struct {
+			ID int `json:"id"`
+		} `json:"mediaInfo"`
+	}
+	if err := c.get(fmt.Sprintf("/api/v1/movie/%d", tmdbID), &movie); err != nil {
+		return 0, false, err
+	}
+	if movie.MediaInfo == nil {
+		return 0, false, nil
+	}
+	return movie.MediaInfo.ID, true, nil
+}
+
 func (c *seerrClient) get(path string, out any) error {
 	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
 	if err != nil {

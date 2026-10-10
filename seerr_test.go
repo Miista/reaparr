@@ -237,3 +237,54 @@ func TestDeleteMedia_NonSuccessStatusIsError(t *testing.T) {
 		t.Fatal("expected error on 404 response, got nil")
 	}
 }
+
+func TestMovieMediaID_FoundAndMissing(t *testing.T) {
+	client, _ := newTestSeerrClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/movie/1212763":
+			fmt.Fprint(w, `{"title":"Evil Dead Burn","mediaInfo":{"id":48}}`)
+		case "/api/v1/movie/5":
+			fmt.Fprint(w, `{"title":"Never Requested"}`)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	})
+
+	id, found, err := client.movieMediaID(1212763)
+	if err != nil || !found || id != 48 {
+		t.Fatalf("movieMediaID(1212763) = %d, %v, %v; want 48, true, nil", id, found, err)
+	}
+	if _, found, err := client.movieMediaID(5); err != nil || found {
+		t.Fatalf("movieMediaID(5) found=%v err=%v; want false, nil", found, err)
+	}
+}
+
+// A reaped movie's Seerr media record must be cleared right away, and a
+// Seerr failure must never surface as an error to the caller.
+func TestClearSeerrMovie_DeletesMediaRecord(t *testing.T) {
+	var deleted []string
+	client, _ := newTestSeerrClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deleted = append(deleted, r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		fmt.Fprint(w, `{"mediaInfo":{"id":48}}`)
+	})
+	s := &sweeper{seerr: client, log: testLogger(t)}
+
+	s.clearSeerrMovie(radarrMovie{ID: 37, Title: "Evil Dead Burn", TmdbID: 1212763})
+
+	if len(deleted) != 1 || deleted[0] != "/api/v1/media/48" {
+		t.Fatalf("deleted = %v, want [/api/v1/media/48]", deleted)
+	}
+}
+
+func TestClearSeerrMovie_SeerrDownIsNotFatal(t *testing.T) {
+	client, _ := newTestSeerrClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	s := &sweeper{seerr: client, log: testLogger(t)}
+	s.clearSeerrMovie(radarrMovie{ID: 37, Title: "Evil Dead Burn", TmdbID: 1212763}) // must not panic
+	(&sweeper{log: testLogger(t)}).clearSeerrMovie(radarrMovie{})                    // no seerr configured
+}
