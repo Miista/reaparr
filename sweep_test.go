@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -748,4 +749,86 @@ func TestCleanUpSeerr_DeleteFailure_DoesNotPanic(t *testing.T) {
 		log:   testLogger(t),
 	}
 	sw.cleanUpSeerr() // must not panic
+}
+
+// seerrCallRecorder is a fake Seerr that counts every request it receives
+// and serves a media record (id 48) for any movie lookup.
+func seerrCallRecorder(t *testing.T) (*seerrClient, *[]string) {
+	t.Helper()
+	var calls []string
+	client, _ := newTestSeerrClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		fmt.Fprint(w, `{"mediaInfo":{"id":48}}`)
+	})
+	return client, &calls
+}
+
+// anyArrServer answers every request with the given status and an empty
+// JSON object — enough for a Radarr movie delete or a Sonarr season delete.
+func anyArrServer(t *testing.T, status int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		w.Write([]byte("{}"))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func newWiringSweeper(t *testing.T, arrSrv *httptest.Server, seerr *seerrClient) *sweeper {
+	t.Helper()
+	arr := &arrClient{
+		radarrURL: arrSrv.URL, radarrAPIKey: "k",
+		sonarrURL: arrSrv.URL, sonarrAPIKey: "k",
+		httpClient: arrSrv.Client(), log: testLogger(t),
+	}
+	return &sweeper{arr: arr, seerr: seerr, log: testLogger(t)}
+}
+
+func TestDeleteDueItem_MovieReapClearsSeerr(t *testing.T) {
+	seerr, calls := seerrCallRecorder(t)
+	sw := newWiringSweeper(t, anyArrServer(t, http.StatusOK), seerr)
+
+	d := dueItem{kind: kindMovie, title: "Evil Dead Burn", movie: radarrMovie{ID: 37, Title: "Evil Dead Burn", TmdbID: 1212763}}
+	if err := sw.deleteDueItem(d); err != nil {
+		t.Fatalf("deleteDueItem: %v", err)
+	}
+
+	want := []string{"GET /api/v1/movie/1212763", "DELETE /api/v1/media/48"}
+	if fmt.Sprint(*calls) != fmt.Sprint(want) {
+		t.Fatalf("seerr calls = %v, want %v", *calls, want)
+	}
+}
+
+// If Radarr refuses, the movie still exists — Seerr must not be touched.
+func TestDeleteDueItem_RadarrFailureLeavesSeerrAlone(t *testing.T) {
+	seerr, calls := seerrCallRecorder(t)
+	sw := newWiringSweeper(t, anyArrServer(t, http.StatusInternalServerError), seerr)
+
+	d := dueItem{kind: kindMovie, title: "Evil Dead Burn", movie: radarrMovie{ID: 37, TmdbID: 1212763}}
+	if err := sw.deleteDueItem(d); err == nil {
+		t.Fatal("expected an error when radarr refuses the delete")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("seerr must not be called after a failed radarr delete, got %v", *calls)
+	}
+}
+
+// Clearing a series' Seerr media would wipe every season's requests, so a
+// season reap must not touch Seerr (see cleanUpSeerr for the fallback).
+func TestDeleteDueItem_SeasonReapDoesNotTouchSeerr(t *testing.T) {
+	seerr, calls := seerrCallRecorder(t)
+	sw := newWiringSweeper(t, anyArrServer(t, http.StatusOK), seerr)
+
+	d := dueItem{kind: kindSeason, title: "Show — Season 1", season: &seasonTarget{seriesID: 5, seasonNumber: 1, episodeIDs: []int{101}, episodeFileIDs: []int{11}}}
+	if err := sw.deleteDueItem(d); err != nil {
+		t.Fatalf("deleteDueItem: %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("a season reap must not call seerr, got %v", *calls)
+	}
 }
