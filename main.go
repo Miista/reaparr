@@ -34,6 +34,7 @@ import (
 	"github.com/Miista/reaparr/internal/api"
 	"github.com/Miista/reaparr/internal/settings"
 	"github.com/Miista/reaparr/internal/store"
+	"github.com/miista/authy"
 )
 
 // addr is the dashboard's bind address. automouse uses :8765 and packrat
@@ -91,9 +92,20 @@ func main() {
 	}
 	mux.Handle("/", noCache(http.FileServer(http.FS(static))))
 
+	// Login gate: a local account created on first launch, replaced by OIDC when
+	// the REAPARR_OIDC_* variables are set. All of it is configured by REAPARR_*
+	// env vars and owned by authy (state lives in /app/data/auth).
+	// REAPARR_AUTH_DISABLED=true turns it off: gate is nil and Wrap leaves the
+	// handler unchanged. Misconfigured: refuse to start rather than serve the
+	// dashboard unprotected.
+	gate, err := authy.FromEnv(context.Background(), "reaparr")
+	if err != nil {
+		logger.Fatal().Err(err).Msg("invalid auth configuration")
+	}
+
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           gate.Wrap(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

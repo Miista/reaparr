@@ -231,13 +231,54 @@ Reaparr serves a small web dashboard on **port 8767** with three tabs:
 A settings/connections change made in the dashboard takes effect on the
 very next sweep — no restart required.
 
-**No authentication.** The dashboard has no login and is not meant to be
-exposed outside your LAN — anyone who can reach port 8767 can view API keys
-(masked) and trigger deletions. This matches the trust model this project
-is typically deployed alongside (e.g. Maintainerr, qBittorrent's WebUI) but
-is a real, known gap for a tool that can delete media; adding auth is a
-planned follow-up, not yet implemented. Keep this port off any
-internet-facing reverse proxy until it is.
+### Login
+
+The dashboard is protected by a login, provided by
+[authy](https://github.com/Miista/authy). It is **on by default**, with no
+configuration at all: the first time you open the dashboard you create a local
+account (username and password) on `/auth/setup`, and every later visit signs
+in on `/auth/local`. A **Sign out** card appears at the bottom of
+Settings → General.
+
+The account (a bcrypt hash in `local.json`, never the password) and the key
+that signs sessions (`auth.json`) live in `/app/data/auth/`, in the same volume
+as `config.json`. The directory must be writable by the container's user.
+**Whoever opens the dashboard first creates the account**, so open it yourself
+before exposing it. To reset a forgotten password, stop the container, delete
+both `/app/data/auth/local.json` and `/app/data/auth/auth.json`, and start it
+again; the setup page returns. (Deleting only `local.json` would leave sessions
+from the old account valid until they expire.)
+
+**Using forward auth instead?** Set `REAPARR_AUTH_DISABLED=true` to turn the
+login off. The dashboard is then unprotected by reaparr itself, so keep it
+behind your proxy's auth.
+
+#### OpenID Connect (optional)
+
+To sign in through an identity provider (Authelia, Authentik, Keycloak,
+Entra ID, …) instead, set all four of these. OIDC is on as soon as they are
+there; there is no separate switch:
+
+| Variable | |
+|---|---|
+| `REAPARR_OIDC_ISSUER` | provider URL, e.g. `https://auth.example.com` |
+| `REAPARR_OIDC_CLIENT_ID` / `REAPARR_OIDC_CLIENT_SECRET` | the client registered at the provider |
+| `REAPARR_OIDC_BASE_URL` | reaparr's external URL, e.g. `https://reaparr.example.com` |
+| `REAPARR_LOCAL_ENABLED` | optional; `true` keeps the local account next to OIDC as an escape hatch (see below) |
+
+Register `<BASE_URL>/auth/callback` as the client's redirect URI (the exact
+value is logged at startup). Who may sign in is decided at the provider.
+
+With OIDC configured, a page load goes straight to the provider and the local
+account is switched off: **setup is closed**, so nobody can claim the dashboard
+by being first. If the provider doesn't approve a login, or can't be reached,
+you get a page with a retry button, never a redirect loop. With
+`REAPARR_LOCAL_ENABLED=true` that page also offers the local account, the way
+in when the provider is down; setup is then open until the account exists, so
+create it right away. Only some of the OIDC settings, or none with
+`REAPARR_LOCAL_ENABLED=false`, makes reaparr refuse to start; an unreachable
+provider does not (it retries in the background). See the authy README for the
+full flow.
 
 ## Deployment
 

@@ -1,10 +1,11 @@
 // Package api implements reaparr's HTTP handlers: settings and
 // connections (with env-override reporting, mirroring automouse's
 // settings API), a dashboard preview of items due for deletion, and manual
-// per-item delete/skip actions. No authentication — this dashboard is
-// LAN-only, matching this stack's trust model for Maintainerr/qBittorrent
-// WebUI (see this repo's README for the explicit tradeoff and the planned
-// follow-up).
+// per-item delete/skip actions. These handlers do no authentication
+// themselves: the authy login wraps the whole server in main.go (see the
+// Login section of this repo's README). With it turned off
+// (REAPARR_AUTH_DISABLED=true) this dashboard is unprotected and meant for a
+// LAN or a proxy that authenticates for it.
 package api
 
 import (
