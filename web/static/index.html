@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/png" href="icon.png">
 <link rel="stylesheet" href="style.css">
+<script src="/auth/client.js"></script>
 </head>
 <body>
 
@@ -296,6 +297,21 @@
               <span class="track"><span class="knob"></span></span>
             </button>
             <span class="lock-label" v-if="settings.env_managed.daemon_enabled"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ settings.env_managed.daemon_enabled }}</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Shown only when the login gate is on: /auth/client.js (see <head>) marks
+           the page, and style.css hides .only-with-gate otherwise. -->
+      <section class="card only-with-gate" style="--hue: 200">
+        <div class="accent"></div>
+        <div class="card-head solo">
+          <div class="card-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3.5H5.5a1.5 1.5 0 0 0-1.5 1.5v10a1.5 1.5 0 0 0 1.5 1.5H8"></path><path d="M12.5 6.5 16 10l-3.5 3.5M16 10H8"></path></svg></div>
+          <div class="card-text">
+            <h2>Sign out</h2>
+          </div>
+          <div class="switch-wrap">
+            <a class="btn btn-ghost" href="/auth/logout">Sign out</a>
           </div>
         </div>
       </section>

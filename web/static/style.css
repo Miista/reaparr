@@ -165,6 +165,10 @@ h1 { margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.03em; }
 .btn-primary:hover:not(:disabled) { background: oklch(0.66 0.2 290); }
 .btn-primary:active, .btn-test:active { transform: translateY(1px); }
 .btn-ghost { background: transparent; color: var(--label); font-weight: 500; }
+a.btn { text-decoration: none; }
+/* /auth/client.js (authy) sets data-authy on <html> when the login gate is
+   on; without it, anything marked .only-with-gate stays hidden. */
+html:not([data-authy]) .only-with-gate { display: none !important; }
 .btn-test { padding: 9px 16px; }
 .btn-test:hover:not(:disabled) { background: oklch(0.55 0.2 290); border-color: oklch(0.62 0.2 290); box-shadow: 0 4px 16px oklch(0.55 0.2 290 / .4); }
 .spin { animation: spin .8s linear infinite; }
