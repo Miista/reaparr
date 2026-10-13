@@ -255,23 +255,22 @@ behind your proxy's auth.
 
 #### Roles (optional, OIDC only)
 
-With OIDC, who may do what can follow groups at the identity provider. Three
+With OIDC, who may do what can follow groups at the identity provider. Two
 variables name a group each. A person holds every role whose group they are
 in, and each action lists the roles it accepts, any one of which is enough.
-Since every list includes the roles above it, an admin may do everything and
-a curator everything a user may:
+Every list includes admin, so an admin may do everything a user may:
 
 | Action | Roles that may | Role comes from |
 |---|---|---|
-| see what is due and the library, keep and unkeep | user, curator, admin | `REAPARR_ROLE_USER_GROUP` → user |
-| delete due titles by hand | curator, admin | `REAPARR_ROLE_CURATOR_GROUP` → curator |
+| see what is due and the library, keep and unkeep | user, admin | `REAPARR_ROLE_USER_GROUP` → user |
+| delete due titles by hand | admin | `REAPARR_ROLE_ADMIN_GROUP` → admin |
 | change settings and connections | admin | `REAPARR_ROLE_ADMIN_GROUP` → admin |
 
-With none of the three set, everyone the provider lets in holds every role,
-as before roles existed. With any set, someone in none of the groups is
-signed in but sees only a "no access" page. `REAPARR_ROLE_USER_GROUP` may be
-left empty to make anyone the provider lets in a user. The local account,
-when enabled, holds every role. The scheduled sweep is not affected by roles.
+With neither set, everyone the provider lets in holds every role, as before
+roles existed. With either set, someone in neither group is signed in but
+sees only a "no access" page. `REAPARR_ROLE_USER_GROUP` may be left empty to
+make anyone the provider lets in a user. The local account, when enabled,
+holds every role. The scheduled sweep is not affected by roles.
 
 Every route checks the roles on the server, so the page hiding a button is a
 courtesy, not the control. A person's groups are read when they sign in and a

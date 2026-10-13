@@ -14,7 +14,7 @@ func withUser(u authy.User, ok bool) func(*http.Request) (authy.User, bool) {
 }
 
 func TestRoles(t *testing.T) {
-	all := Config{UserGroup: "media-users", CuratorGroup: "media-curators", AdminGroup: "media-admins", GateOn: true}
+	all := Config{UserGroup: "media-users", AdminGroup: "media-admins", GateOn: true}
 	tests := []struct {
 		name   string
 		cfg    Config
@@ -29,16 +29,15 @@ func TestRoles(t *testing.T) {
 		{"local account is the owner", all, authy.User{Subject: "local:owner"}, true, All, true},
 		{"no roles configured: anyone signed in holds every role", Config{GateOn: true}, authy.User{Subject: "a"}, true, All, true},
 		{"admin group alone gives only admin", all, authy.User{Subject: "a", Groups: []string{"media-admins"}}, true, []Role{Admin}, true},
-		{"curator group alone gives only curator", all, authy.User{Subject: "a", Groups: []string{"media-curators"}}, true, []Role{Curator}, true},
 		{"user group", all, authy.User{Subject: "a", Groups: []string{"media-users"}}, true, []Role{User}, true},
-		{"every group gives every role", all, authy.User{Subject: "a", Groups: []string{"media-users", "media-curators", "media-admins"}}, true, All, true},
-		{"user and curator", all, authy.User{Subject: "a", Groups: []string{"media-users", "media-curators"}}, true, []Role{User, Curator}, true},
+		{"every group gives every role", all, authy.User{Subject: "a", Groups: []string{"media-users", "media-admins"}}, true, All, true},
 		{"in no group: no roles", all, authy.User{Subject: "a", Groups: []string{"users"}}, true, nil, true},
 		{"no groups claim at all: no roles", all, authy.User{Subject: "a"}, true, nil, true},
 		{"group match is exact", all, authy.User{Subject: "a", Groups: []string{"Media-Admins"}}, true, nil, true},
 		{"user group empty: anyone signed in is a user", Config{AdminGroup: "media-admins", GateOn: true}, authy.User{Subject: "a", Groups: []string{"whatever"}}, true, []Role{User}, true},
 		{"user group empty, admin still from its group", Config{AdminGroup: "media-admins", GateOn: true}, authy.User{Subject: "a", Groups: []string{"media-admins"}}, true, []Role{User, Admin}, true},
-		{"curator group unset gives curator to nobody", Config{UserGroup: "media-users", AdminGroup: "media-admins", GateOn: true}, authy.User{Subject: "a", Groups: []string{"media-curators", "media-users"}}, true, []Role{User}, true},
+		{"a former curator group means nothing now", all, authy.User{Subject: "a", Groups: []string{"media-curators", "media-users"}}, true, []Role{User}, true},
+		{"admin group unset gives admin to nobody", Config{UserGroup: "media-users", GateOn: true}, authy.User{Subject: "a", Groups: []string{"media-admins", "media-users"}}, true, []Role{User}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,24 +55,23 @@ func TestRoles(t *testing.T) {
 }
 
 func TestHas(t *testing.T) {
-	p := Principal{Roles: []Role{User, Curator}}
-	if !p.Has(User) || !p.Has(Curator) || p.Has(Admin) {
+	p := Principal{Roles: []Role{User}}
+	if !p.Has(User) || p.Has(Admin) {
 		t.Fatal("Has must report exactly the roles held")
 	}
-	if !p.HasAny(Admin, Curator) || p.HasAny(Admin) || p.HasAny() {
+	if !p.HasAny(Admin, User) || p.HasAny(Admin) || p.HasAny() {
 		t.Fatal("HasAny must be true only when some listed role is held")
 	}
-	if (Principal{}).HasAny(User, Curator, Admin) {
+	if (Principal{}).HasAny(User, Admin) {
 		t.Fatal("no roles must match nothing")
 	}
 }
 
 func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("REAPARR_ROLE_USER_GROUP", " media-users ")
-	t.Setenv("REAPARR_ROLE_CURATOR_GROUP", "media-curators")
 	t.Setenv("REAPARR_ROLE_ADMIN_GROUP", "")
 	c := ConfigFromEnv(true)
-	if c.UserGroup != "media-users" || c.CuratorGroup != "media-curators" || c.AdminGroup != "" || !c.GateOn {
+	if c.UserGroup != "media-users" || c.AdminGroup != "" || !c.GateOn {
 		t.Fatalf("unexpected config: %+v", c)
 	}
 	if !c.Configured() {

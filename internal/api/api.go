@@ -164,7 +164,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/api/me", s.handleMe)
 	// Seeing what is due and keeping things.
-	view := []auth.Role{auth.User, auth.Curator, auth.Admin}
+	view := []auth.Role{auth.User, auth.Admin}
 	mux.HandleFunc("/api/status", s.guard(view, s.handleStatus))
 	mux.HandleFunc("/api/due", s.guard(view, s.handleDue))
 	mux.HandleFunc("/api/library", s.guard(view, s.handleLibrary))
@@ -172,7 +172,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/poster/", s.guard(view, s.handlePoster))
 	// Deleting by hand. The scheduled sweep is not a request and is
 	// unaffected by roles.
-	del := []auth.Role{auth.Curator, auth.Admin}
+	del := []auth.Role{auth.Admin}
 	mux.HandleFunc("/api/due/delete", s.guard(del, s.handleDeleteDue))
 	mux.HandleFunc("/api/due/delete-selected", s.guard(del, s.handleDeleteSelected))
 	// Settings and connections, including reading them (URLs and masked

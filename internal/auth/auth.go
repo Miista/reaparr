@@ -2,9 +2,10 @@
 // (the session, the identity provider, the local account) is authy's; this
 // turns the groups it reports into roles:
 //
-//	user     may see what is due and the library, and keep or unkeep titles
-//	curator  may delete due titles by hand
-//	admin    may change settings and connections
+//	user   may see what is due and the library, and keep titles (and unkeep
+//	       the ones they kept themselves)
+//	admin  may do everything else: delete due titles by hand, unkeep anyone's,
+//	       see who kept what, and change settings and connections
 //
 // A person holds every role whose group they are in, and nothing else. Each
 // route then lists the roles it accepts (see internal/api), so the roles are
@@ -25,13 +26,12 @@ import (
 type Role string
 
 const (
-	User    Role = "user"
-	Curator Role = "curator"
-	Admin   Role = "admin"
+	User  Role = "user"
+	Admin Role = "admin"
 )
 
 // All is every role, in the order they are reported.
-var All = []Role{User, Curator, Admin}
+var All = []Role{User, Admin}
 
 // Principal is who a request is from and the roles they hold.
 type Principal struct {
@@ -64,30 +64,27 @@ func (p Principal) HasAny(roles ...Role) bool {
 
 // Config names the group behind each role. A group left empty gives its role
 // to nobody, except UserGroup: empty means anyone the provider lets in is a
-// user. With all three empty, everyone holds every role.
+// user. With both empty, everyone holds every role.
 type Config struct {
-	UserGroup    string
-	CuratorGroup string
-	AdminGroup   string
+	UserGroup  string
+	AdminGroup string
 	// GateOn is false when there is no login at all (REAPARR_AUTH_DISABLED):
 	// the app is then behind something else, and everyone holds every role.
 	GateOn bool
 }
 
-// ConfigFromEnv reads REAPARR_ROLE_USER_GROUP, REAPARR_ROLE_CURATOR_GROUP
-// and REAPARR_ROLE_ADMIN_GROUP.
+// ConfigFromEnv reads REAPARR_ROLE_USER_GROUP and REAPARR_ROLE_ADMIN_GROUP.
 func ConfigFromEnv(gateOn bool) Config {
 	return Config{
-		UserGroup:    strings.TrimSpace(os.Getenv("REAPARR_ROLE_USER_GROUP")),
-		CuratorGroup: strings.TrimSpace(os.Getenv("REAPARR_ROLE_CURATOR_GROUP")),
-		AdminGroup:   strings.TrimSpace(os.Getenv("REAPARR_ROLE_ADMIN_GROUP")),
-		GateOn:       gateOn,
+		UserGroup:  strings.TrimSpace(os.Getenv("REAPARR_ROLE_USER_GROUP")),
+		AdminGroup: strings.TrimSpace(os.Getenv("REAPARR_ROLE_ADMIN_GROUP")),
+		GateOn:     gateOn,
 	}
 }
 
 // Configured reports whether any group is set, i.e. whether roles are in use.
 func (c Config) Configured() bool {
-	return c.UserGroup != "" || c.CuratorGroup != "" || c.AdminGroup != ""
+	return c.UserGroup != "" || c.AdminGroup != ""
 }
 
 // Auth resolves a request to a Principal.
@@ -126,9 +123,6 @@ func (a *Auth) rolesFor(u authy.User) []Role {
 	var roles []Role
 	if a.cfg.UserGroup == "" || u.InGroup(a.cfg.UserGroup) {
 		roles = append(roles, User)
-	}
-	if a.cfg.CuratorGroup != "" && u.InGroup(a.cfg.CuratorGroup) {
-		roles = append(roles, Curator)
 	}
 	if a.cfg.AdminGroup != "" && u.InGroup(a.cfg.AdminGroup) {
 		roles = append(roles, Admin)

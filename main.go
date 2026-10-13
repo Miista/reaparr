@@ -95,8 +95,8 @@ func main() {
 	// handler unchanged. Misconfigured: refuse to start rather than serve the
 	// dashboard unprotected.
 	//
-	// reaparr asks the provider for groups, which is how user, curator and
-	// admin are told apart (see internal/auth). Sessions are shorter than
+	// reaparr asks the provider for groups, which is how user and admin are
+	// told apart (see internal/auth). Sessions are shorter than
 	// authy's week because a person's groups are only read when they sign in:
 	// a change at the provider reaches reaparr at the next sign-in, so this
 	// is also how long a demotion can take.
@@ -112,6 +112,9 @@ func main() {
 		logger.Warn().Msg("login is OFF (REAPARR_AUTH_DISABLED): everyone who can reach this port is an admin")
 	case !roles.Configured():
 		logger.Warn().Msg("no REAPARR_ROLE_*_GROUP is set: everyone who signs in is an admin")
+	}
+	if os.Getenv("REAPARR_ROLE_CURATOR_GROUP") != "" {
+		logger.Warn().Msg("REAPARR_ROLE_CURATOR_GROUP is no longer used: there is no curator role; deleting by hand is for admins")
 	}
 
 	apiServer := api.New(st, live, tester, reloadAndRefresh, auth.New(roles), logger)

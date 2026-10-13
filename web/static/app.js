@@ -48,8 +48,8 @@ function humanSeconds(s) {
 // in internal/api, which is what actually enforces it; the page only uses
 // this to show what a person can do. /api/me reports the roles held.
 const MAY = {
-  view: ['user', 'curator', 'admin'],
-  delete: ['curator', 'admin'],
+  view: ['user', 'admin'],
+  delete: ['admin'],
   configure: ['admin'],
 };
 
