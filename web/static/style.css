@@ -446,13 +446,14 @@ h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
   /* Bottom tab bar */
   .tabs {
     position: fixed; z-index: 40; left: 0; right: 0; bottom: 0; max-width: none; align-self: auto;
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; overflow: visible;
+    /* One equal column per tab: a user has two (no Settings), an admin three. */
+    display: flex; gap: 0; overflow: visible;
     padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); border-radius: 0;
     border: none; border-top: 1px solid var(--border);
     background: rgba(14,15,20,.92); backdrop-filter: blur(14px);
   }
   .tabs a {
-    position: relative; flex-direction: column; justify-content: center; gap: 3px; padding: 6px 4px;
+    position: relative; flex: 1; flex-direction: column; justify-content: center; gap: 3px; padding: 6px 4px;
     font-size: 11px; font-weight: 500; border-radius: 10px;
   }
   .tabs a.active { background: transparent; box-shadow: none; color: oklch(0.8 0.15 290); font-weight: 600; }
