@@ -131,7 +131,7 @@ func TestRouteGuards(t *testing.T) {
 
 func TestMe(t *testing.T) {
 	mux := http.NewServeMux()
-	serverWith(fakeAuth{p: auth.Principal{Sub: "s", Name: "Søren", Roles: []auth.Role{auth.User, auth.Admin}}, ok: true}).Routes(mux)
+	serverWith(fakeAuth{p: auth.Principal{Sub: "s", Name: "Alex", Roles: []auth.Role{auth.User, auth.Admin}}, ok: true}).Routes(mux)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/me", nil))
 	if rec.Code != http.StatusOK {
@@ -144,7 +144,7 @@ func TestMe(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&me); err != nil {
 		t.Fatal(err)
 	}
-	if me.Name != "Søren" || len(me.Roles) != 2 || me.Roles[0] != "user" || me.Roles[1] != "admin" {
+	if me.Name != "Alex" || len(me.Roles) != 2 || me.Roles[0] != "user" || me.Roles[1] != "admin" {
 		t.Fatalf("unexpected me: %+v", me)
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
