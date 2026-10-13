@@ -257,8 +257,9 @@ behind your proxy's auth.
 
 With OIDC, who may do what can follow groups at the identity provider. Three
 variables name a group each. A person holds every role whose group they are
-in, and each action lists the roles it accepts; the roles are not ranked, so
-`admin` does not imply the other two:
+in, and each action lists the roles it accepts, any one of which is enough.
+Since every list includes the roles above it, an admin may do everything and
+a curator everything a user may:
 
 | Action | Roles that may | Role comes from |
 |---|---|---|
