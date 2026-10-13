@@ -54,8 +54,9 @@ var staticFiles embed.FS
 // volume here to keep dashboard-entered settings across restarts.
 const dataDir = "/app/data"
 
-// sessionTTL is how long a sign-in lasts without use, and so how long a change
-// of someone's groups at the provider can take to reach reaparr.
+// sessionTTL is how long a sign-in lasts without use. A change of someone's
+// groups at the provider reaches reaparr at their next sign-in, which authy
+// forces at 4 × this (48h) at the latest, however active the session.
 const sessionTTL = 12 * time.Hour
 
 func main() {
@@ -107,6 +108,11 @@ func main() {
 		logger.Fatal().Err(err).Msg("invalid auth configuration")
 	}
 	roles := auth.ConfigFromEnv(gate != nil)
+	// OIDC on with no role group would make everyone the provider admits an
+	// admin: refuse, unless REAPARR_ROLES_DISABLED=true says that is intended.
+	if err := roles.Check(gate != nil && os.Getenv("REAPARR_OIDC_ISSUER") != ""); err != nil {
+		logger.Fatal().Err(err).Msg("invalid role configuration")
+	}
 	switch {
 	case gate == nil:
 		logger.Warn().Msg("login is OFF (REAPARR_AUTH_DISABLED): everyone who can reach this port is an admin")

@@ -54,6 +54,34 @@ func TestRoles(t *testing.T) {
 	}
 }
 
+func TestCheck(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      Config
+		oidc     bool
+		disabled string
+		wantErr  bool
+	}{
+		{"oidc with no group is refused", Config{GateOn: true}, true, "", true},
+		{"oidc with a user group is fine", Config{UserGroup: "u", GateOn: true}, true, "", false},
+		{"oidc with an admin group is fine", Config{AdminGroup: "a", GateOn: true}, true, "", false},
+		{"oidc with no group, opted out", Config{GateOn: true}, true, "true", false},
+		{"opt-out is case-insensitive", Config{GateOn: true}, true, " TRUE ", false},
+		{"opt-out must say true", Config{GateOn: true}, true, "1", true},
+		{"no oidc needs no group", Config{GateOn: true}, false, "", false},
+		{"no login needs no group", Config{}, false, "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("REAPARR_ROLES_DISABLED", tc.disabled)
+			err := tc.cfg.Check(tc.oidc)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestHas(t *testing.T) {
 	p := Principal{Roles: []Role{User}}
 	if !p.Has(User) || p.Has(Admin) {

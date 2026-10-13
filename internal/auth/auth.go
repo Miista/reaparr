@@ -11,10 +11,12 @@
 // route then lists the roles it accepts (see internal/api), so the roles are
 // not ordered: what an admin may do is whatever lists "admin". With no group
 // configured at all, everyone the provider lets in holds every role, which
-// is how reaparr behaved before roles existed.
+// is how reaparr behaved before roles existed. With OIDC on, reaparr refuses
+// to start in that state unless REAPARR_ROLES_DISABLED=true (see Check).
 package auth
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -85,6 +87,18 @@ func ConfigFromEnv(gateOn bool) Config {
 // Configured reports whether any group is set, i.e. whether roles are in use.
 func (c Config) Configured() bool {
 	return c.UserGroup != "" || c.AdminGroup != ""
+}
+
+// Check refuses a setup where OIDC lets people in but no role group says who
+// may do what: everyone the provider admits would be an admin. Setting
+// REAPARR_ROLES_DISABLED=true accepts that on purpose. Without OIDC (local
+// account only, or no login) there are no groups to read, so nothing to check.
+func (c Config) Check(oidc bool) error {
+	if !oidc || c.Configured() || strings.EqualFold(strings.TrimSpace(os.Getenv("REAPARR_ROLES_DISABLED")), "true") {
+		return nil
+	}
+	return errors.New("OIDC is on but neither REAPARR_ROLE_USER_GROUP nor REAPARR_ROLE_ADMIN_GROUP is set, " +
+		"so everyone the provider admits would be an admin; set a group, or REAPARR_ROLES_DISABLED=true to allow that")
 }
 
 // Auth resolves a request to a Principal.

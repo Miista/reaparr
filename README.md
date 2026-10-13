@@ -267,9 +267,11 @@ Every list includes admin, so an admin may do everything a user may:
 | delete due titles by hand | admin | `REAPARR_ROLE_ADMIN_GROUP` → admin |
 | change settings and connections | admin | `REAPARR_ROLE_ADMIN_GROUP` → admin |
 
-With neither set, everyone the provider lets in holds every role, as before
-roles existed. With either set, someone in neither group is signed in but
-sees only a "no access" page. `REAPARR_ROLE_USER_GROUP` may be left empty to
+With OIDC on and neither set, reaparr **refuses to start**, since everyone the
+provider admits would be an admin; set `REAPARR_ROLES_DISABLED=true` to allow
+that on purpose. (The local account and `REAPARR_AUTH_DISABLED` have no groups
+and are not affected.) With either set, someone in neither group is signed in
+but sees only a "no access" page. `REAPARR_ROLE_USER_GROUP` may be left empty to
 make anyone the provider lets in a user. The local account, when enabled,
 holds every role. The scheduled sweep is not affected by roles.
 
@@ -280,9 +282,14 @@ anyone. A title kept before this was recorded, or by hand in Radarr/Sonarr,
 has no owner and only an admin can unkeep it. Only admins see who kept what.
 
 Every route checks the roles on the server, so the page hiding a button is a
-courtesy, not the control. A person's groups are read when they sign in and a
-session lasts 12 hours without use, so a change at the provider can take up to
-that long to reach reaparr.
+courtesy, not the control. A person's groups are read when they sign in. A
+session ends after 12 hours without use, and in any case 48 hours after
+signing in, so a change at the provider can take up to 48 hours to reach
+reaparr.
+
+An admin is a trusted operator: they can change connections and use **Test
+connection** to make reaparr request a URL of their choice from inside your
+network.
 
 #### OpenID Connect (optional)
 
