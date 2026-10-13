@@ -3,6 +3,7 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/miista/authy"
@@ -12,32 +13,32 @@ func withUser(u authy.User, ok bool) func(*http.Request) (authy.User, bool) {
 	return func(*http.Request) (authy.User, bool) { return u, ok }
 }
 
-func TestRoleLadder(t *testing.T) {
+func TestRoles(t *testing.T) {
 	all := Config{UserGroup: "media-users", CuratorGroup: "media-curators", AdminGroup: "media-admins", GateOn: true}
 	tests := []struct {
 		name   string
 		cfg    Config
 		user   authy.User
 		signed bool
-		want   Role
+		want   []Role
 		wantOK bool
 	}{
-		{"gate off: everyone is an admin", Config{GateOn: false}, authy.User{}, false, Admin, true},
-		{"not signed in", all, authy.User{}, false, None, false},
-		{"signed in with an empty subject", all, authy.User{Subject: ""}, true, None, false},
-		{"local account is the owner", all, authy.User{Subject: "local:owner"}, true, Admin, true},
-		{"no roles configured: anyone signed in is an admin", Config{GateOn: true}, authy.User{Subject: "a"}, true, Admin, true},
-		{"admin group", all, authy.User{Subject: "a", Groups: []string{"media-admins"}}, true, Admin, true},
-		{"curator group", all, authy.User{Subject: "a", Groups: []string{"media-curators"}}, true, Curator, true},
-		{"user group", all, authy.User{Subject: "a", Groups: []string{"media-users"}}, true, User, true},
-		{"highest group wins", all, authy.User{Subject: "a", Groups: []string{"media-users", "media-curators", "media-admins"}}, true, Admin, true},
-		{"curator beats user", all, authy.User{Subject: "a", Groups: []string{"media-users", "media-curators"}}, true, Curator, true},
-		{"in no group", all, authy.User{Subject: "a", Groups: []string{"users"}}, true, None, true},
-		{"no groups claim at all", all, authy.User{Subject: "a"}, true, None, true},
-		{"group match is exact", all, authy.User{Subject: "a", Groups: []string{"Media-Admins"}}, true, None, true},
-		{"user group empty: anyone signed in is a user", Config{AdminGroup: "media-admins", GateOn: true}, authy.User{Subject: "a", Groups: []string{"whatever"}}, true, User, true},
-		{"user group empty, admin still from its group", Config{AdminGroup: "media-admins", GateOn: true}, authy.User{Subject: "a", Groups: []string{"media-admins"}}, true, Admin, true},
-		{"curator group unset grants curator to nobody", Config{UserGroup: "media-users", AdminGroup: "media-admins", GateOn: true}, authy.User{Subject: "a", Groups: []string{"media-curators", "media-users"}}, true, User, true},
+		{"gate off: everyone holds every role", Config{GateOn: false}, authy.User{}, false, All, true},
+		{"not signed in", all, authy.User{}, false, nil, false},
+		{"signed in with an empty subject", all, authy.User{Subject: ""}, true, nil, false},
+		{"local account is the owner", all, authy.User{Subject: "local:owner"}, true, All, true},
+		{"no roles configured: anyone signed in holds every role", Config{GateOn: true}, authy.User{Subject: "a"}, true, All, true},
+		{"admin group alone gives only admin", all, authy.User{Subject: "a", Groups: []string{"media-admins"}}, true, []Role{Admin}, true},
+		{"curator group alone gives only curator", all, authy.User{Subject: "a", Groups: []string{"media-curators"}}, true, []Role{Curator}, true},
+		{"user group", all, authy.User{Subject: "a", Groups: []string{"media-users"}}, true, []Role{User}, true},
+		{"every group gives every role", all, authy.User{Subject: "a", Groups: []string{"media-users", "media-curators", "media-admins"}}, true, All, true},
+		{"user and curator", all, authy.User{Subject: "a", Groups: []string{"media-users", "media-curators"}}, true, []Role{User, Curator}, true},
+		{"in no group: no roles", all, authy.User{Subject: "a", Groups: []string{"users"}}, true, nil, true},
+		{"no groups claim at all: no roles", all, authy.User{Subject: "a"}, true, nil, true},
+		{"group match is exact", all, authy.User{Subject: "a", Groups: []string{"Media-Admins"}}, true, nil, true},
+		{"user group empty: anyone signed in is a user", Config{AdminGroup: "media-admins", GateOn: true}, authy.User{Subject: "a", Groups: []string{"whatever"}}, true, []Role{User}, true},
+		{"user group empty, admin still from its group", Config{AdminGroup: "media-admins", GateOn: true}, authy.User{Subject: "a", Groups: []string{"media-admins"}}, true, []Role{User, Admin}, true},
+		{"curator group unset gives curator to nobody", Config{UserGroup: "media-users", AdminGroup: "media-admins", GateOn: true}, authy.User{Subject: "a", Groups: []string{"media-curators", "media-users"}}, true, []Role{User}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,19 +48,23 @@ func TestRoleLadder(t *testing.T) {
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
 			}
-			if ok && p.Role != tc.want {
-				t.Fatalf("role = %s, want %s", p.Role, tc.want)
+			if ok && !reflect.DeepEqual(p.Roles, tc.want) {
+				t.Fatalf("roles = %v, want %v", p.Roles, tc.want)
 			}
 		})
 	}
 }
 
-func TestAtLeast(t *testing.T) {
-	if !Admin.AtLeast(Curator) || !Curator.AtLeast(User) || !User.AtLeast(User) {
-		t.Fatal("a higher role must be at least a lower one")
+func TestHas(t *testing.T) {
+	p := Principal{Roles: []Role{User, Curator}}
+	if !p.Has(User) || !p.Has(Curator) || p.Has(Admin) {
+		t.Fatal("Has must report exactly the roles held")
 	}
-	if User.AtLeast(Curator) || Curator.AtLeast(Admin) || None.AtLeast(User) {
-		t.Fatal("a lower role must not be at least a higher one")
+	if !p.HasAny(Admin, Curator) || p.HasAny(Admin) || p.HasAny() {
+		t.Fatal("HasAny must be true only when some listed role is held")
+	}
+	if (Principal{}).HasAny(User, Curator, Admin) {
+		t.Fatal("no roles must match nothing")
 	}
 }
 

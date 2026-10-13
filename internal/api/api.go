@@ -157,42 +157,46 @@ func New(st *store.Store, sw Sweeper, tester ConnectionTester, reload ReloadFunc
 	}
 }
 
-// Routes registers all handlers on mux. The role next to each route is the
-// least that may call it; internal/api/guard_test.go pins this table.
+// Routes registers all handlers on mux. Each route lists the roles it
+// accepts; a person needs any one of them. internal/api/guard_test.go pins
+// this table, and the page mirrors it (MAY in web/static/app.js).
 func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/api/me", s.handleMe)
-	// Seeing what is due and keeping things: every role that is let in.
-	mux.HandleFunc("/api/status", s.guard(auth.User, s.handleStatus))
-	mux.HandleFunc("/api/due", s.guard(auth.User, s.handleDue))
-	mux.HandleFunc("/api/library", s.guard(auth.User, s.handleLibrary))
-	mux.HandleFunc("/api/library/keep", s.guard(auth.User, s.handleLibraryKeep))
-	mux.HandleFunc("/api/poster/", s.guard(auth.User, s.handlePoster))
-	// Deleting by hand: curators. The scheduled sweep is not a request and
-	// is unaffected by roles.
-	mux.HandleFunc("/api/due/delete", s.guard(auth.Curator, s.handleDeleteDue))
-	mux.HandleFunc("/api/due/delete-selected", s.guard(auth.Curator, s.handleDeleteSelected))
+	// Seeing what is due and keeping things.
+	view := []auth.Role{auth.User, auth.Curator, auth.Admin}
+	mux.HandleFunc("/api/status", s.guard(view, s.handleStatus))
+	mux.HandleFunc("/api/due", s.guard(view, s.handleDue))
+	mux.HandleFunc("/api/library", s.guard(view, s.handleLibrary))
+	mux.HandleFunc("/api/library/keep", s.guard(view, s.handleLibraryKeep))
+	mux.HandleFunc("/api/poster/", s.guard(view, s.handlePoster))
+	// Deleting by hand. The scheduled sweep is not a request and is
+	// unaffected by roles.
+	del := []auth.Role{auth.Curator, auth.Admin}
+	mux.HandleFunc("/api/due/delete", s.guard(del, s.handleDeleteDue))
+	mux.HandleFunc("/api/due/delete-selected", s.guard(del, s.handleDeleteSelected))
 	// Settings and connections, including reading them (URLs and masked
-	// keys are still configuration): admins.
-	mux.HandleFunc("/api/settings", s.guard(auth.Admin, s.handleSettings))
-	mux.HandleFunc("/api/connections", s.guard(auth.Admin, s.handleConnections))
-	mux.HandleFunc("/api/connections/test", s.guard(auth.Admin, s.handleTestConnection))
-	mux.HandleFunc("/api/jellyfin/users", s.guard(auth.Admin, s.handleJellyfinUsers))
+	// keys are still configuration).
+	configure := []auth.Role{auth.Admin}
+	mux.HandleFunc("/api/settings", s.guard(configure, s.handleSettings))
+	mux.HandleFunc("/api/connections", s.guard(configure, s.handleConnections))
+	mux.HandleFunc("/api/connections/test", s.guard(configure, s.handleTestConnection))
+	mux.HandleFunc("/api/jellyfin/users", s.guard(configure, s.handleJellyfinUsers))
 }
 
 type principalKey struct{}
 
-// guard runs h only for someone signed in who may do what min may. Nobody
+// guard runs h only for someone signed in who holds one of roles. Nobody
 // signed in is 401, so the page knows to sign in; signed in but not allowed
 // is 403.
-func (s *Server) guard(min auth.Role, h http.HandlerFunc) http.HandlerFunc {
+func (s *Server) guard(roles []auth.Role, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := s.auth.Principal(r)
 		switch {
 		case !ok:
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
-		case p.Role == auth.None || !p.Role.AtLeast(min):
+		case !p.HasAny(roles...):
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "You do not have access to this"})
 			return
 		}
@@ -219,12 +223,16 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	roles := p.Roles
+	if roles == nil {
+		roles = []auth.Role{}
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"sub":   p.Sub,
 		"name":  p.Name,
 		"email": p.Email,
-		"role":  p.Role.String(),
+		"roles": roles,
 		"local": p.Local,
 	})
 }

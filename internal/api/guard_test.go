@@ -23,6 +23,10 @@ func serverWith(a Authorizer) *Server {
 	return &Server{auth: a, log: zerolog.Nop()}
 }
 
+func holding(roles ...auth.Role) fakeAuth {
+	return fakeAuth{p: auth.Principal{Roles: roles}, ok: true}
+}
+
 func TestGuard(t *testing.T) {
 	ran := func() (http.HandlerFunc, *bool) {
 		called := false
@@ -35,23 +39,23 @@ func TestGuard(t *testing.T) {
 	tests := []struct {
 		name     string
 		auth     Authorizer
-		min      auth.Role
+		accepts  []auth.Role
 		wantCode int
 		wantRan  bool
 	}{
-		{"nobody signed in is 401", fakeAuth{ok: false}, auth.User, http.StatusUnauthorized, false},
-		{"no access is 403 even for the lowest guard", fakeAuth{p: auth.Principal{Role: auth.None}, ok: true}, auth.User, http.StatusForbidden, false},
-		{"user passes a user guard", fakeAuth{p: auth.Principal{Role: auth.User}, ok: true}, auth.User, http.StatusNoContent, true},
-		{"user fails a curator guard", fakeAuth{p: auth.Principal{Role: auth.User}, ok: true}, auth.Curator, http.StatusForbidden, false},
-		{"curator passes a curator guard", fakeAuth{p: auth.Principal{Role: auth.Curator}, ok: true}, auth.Curator, http.StatusNoContent, true},
-		{"curator fails an admin guard", fakeAuth{p: auth.Principal{Role: auth.Curator}, ok: true}, auth.Admin, http.StatusForbidden, false},
-		{"admin passes every guard", fakeAuth{p: auth.Principal{Role: auth.Admin}, ok: true}, auth.Admin, http.StatusNoContent, true},
+		{"nobody signed in is 401", fakeAuth{ok: false}, []auth.Role{auth.User}, http.StatusUnauthorized, false},
+		{"no roles is 403", holding(), []auth.Role{auth.User, auth.Curator, auth.Admin}, http.StatusForbidden, false},
+		{"a held role passes", holding(auth.User), []auth.Role{auth.User}, http.StatusNoContent, true},
+		{"any listed role is enough", holding(auth.Curator), []auth.Role{auth.User, auth.Curator}, http.StatusNoContent, true},
+		{"a role not listed fails", holding(auth.User), []auth.Role{auth.Curator, auth.Admin}, http.StatusForbidden, false},
+		{"admin is not implied", holding(auth.Admin), []auth.Role{auth.Curator}, http.StatusForbidden, false},
+		{"nothing accepted blocks everyone", holding(auth.Admin), nil, http.StatusForbidden, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h, called := ran()
 			rec := httptest.NewRecorder()
-			serverWith(tc.auth).guard(tc.min, h)(rec, httptest.NewRequest(http.MethodGet, "/api/x", nil))
+			serverWith(tc.auth).guard(tc.accepts, h)(rec, httptest.NewRequest(http.MethodGet, "/api/x", nil))
 			if rec.Code != tc.wantCode {
 				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)
 			}
@@ -62,46 +66,64 @@ func TestGuard(t *testing.T) {
 	}
 }
 
-// TestRouteGuards pins which role each route needs, so a route can't be
+// TestRouteGuards pins which roles each route accepts, so a route can't be
 // added or loosened without this table changing with it.
 func TestRouteGuards(t *testing.T) {
-	routes := map[string]auth.Role{
-		"/api/me":                  auth.None, // anyone signed in, so the page can say "no access"
-		"/api/status":              auth.User,
-		"/api/due":                 auth.User,
-		"/api/library":             auth.User,
-		"/api/library/keep":        auth.User,
-		"/api/poster/radarr/1":     auth.User,
-		"/api/due/delete":          auth.Curator,
-		"/api/due/delete-selected": auth.Curator,
-		"/api/settings":            auth.Admin,
-		"/api/connections":         auth.Admin,
-		"/api/connections/test":    auth.Admin,
-		"/api/jellyfin/users":      auth.Admin,
+	view := []auth.Role{auth.User, auth.Curator, auth.Admin}
+	del := []auth.Role{auth.Curator, auth.Admin}
+	configure := []auth.Role{auth.Admin}
+	routes := map[string][]auth.Role{
+		"/api/status":              view,
+		"/api/due":                 view,
+		"/api/library":             view,
+		"/api/library/keep":        view,
+		"/api/poster/radarr/1":     view,
+		"/api/due/delete":          del,
+		"/api/due/delete-selected": del,
+		"/api/settings":            configure,
+		"/api/connections":         configure,
+		"/api/connections/test":    configure,
+		"/api/jellyfin/users":      configure,
 	}
-	roles := []auth.Role{auth.None, auth.User, auth.Curator, auth.Admin}
-	for path, min := range routes {
-		for _, role := range roles {
+	// Each person holds exactly one role, plus one holding none.
+	people := map[string]auth.Principal{
+		"nobody":  {},
+		"user":    {Roles: []auth.Role{auth.User}},
+		"curator": {Roles: []auth.Role{auth.Curator}},
+		"admin":   {Roles: []auth.Role{auth.Admin}},
+	}
+	for path, accepts := range routes {
+		for who, p := range people {
 			mux := http.NewServeMux()
 			// Handlers behind a passed guard would touch the nil sweeper/store;
 			// a POST with an empty body (or GET on a POST-only route) fails
 			// before that, with anything but 401/403. That is all this needs.
-			serverWith(fakeAuth{p: auth.Principal{Role: role}, ok: true}).Routes(mux)
+			serverWith(fakeAuth{p: p, ok: true}).Routes(mux)
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
 			blocked := rec.Code == http.StatusForbidden
-			if role.AtLeast(min) && blocked {
-				t.Errorf("%s: %s should pass a %s guard, got 403", path, role, min)
+			if p.HasAny(accepts...) && blocked {
+				t.Errorf("%s: %s should pass, got 403", path, who)
 			}
-			if !role.AtLeast(min) && !blocked {
-				t.Errorf("%s: %s should be blocked by a %s guard, got %d", path, role, min, rec.Code)
+			if !p.HasAny(accepts...) && !blocked {
+				t.Errorf("%s: %s should be blocked, got %d", path, who, rec.Code)
 			}
 		}
 	}
 
+	// /api/me is for anyone signed in, even with no roles, so the page can
+	// say "no access".
 	mux := http.NewServeMux()
-	serverWith(fakeAuth{ok: false}).Routes(mux)
+	serverWith(holding()).Routes(mux)
 	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/me", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("/api/me with no roles should be 200, got %d", rec.Code)
+	}
+
+	mux = http.NewServeMux()
+	serverWith(fakeAuth{ok: false}).Routes(mux)
+	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("/healthz must stay open, got %d", rec.Code)
@@ -110,21 +132,35 @@ func TestRouteGuards(t *testing.T) {
 
 func TestMe(t *testing.T) {
 	mux := http.NewServeMux()
-	serverWith(fakeAuth{p: auth.Principal{Sub: "s", Name: "Søren", Role: auth.Curator}, ok: true}).Routes(mux)
+	serverWith(fakeAuth{p: auth.Principal{Sub: "s", Name: "Søren", Roles: []auth.Role{auth.User, auth.Curator}}, ok: true}).Routes(mux)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/me", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	var me map[string]any
+	var me struct {
+		Name  string   `json:"name"`
+		Roles []string `json:"roles"`
+	}
 	if err := json.NewDecoder(rec.Body).Decode(&me); err != nil {
 		t.Fatal(err)
 	}
-	if me["role"] != "curator" || me["name"] != "Søren" {
-		t.Fatalf("unexpected me: %v", me)
+	if me.Name != "Søren" || len(me.Roles) != 2 || me.Roles[0] != "user" || me.Roles[1] != "curator" {
+		t.Fatalf("unexpected me: %+v", me)
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("/api/me must not be cached")
+	}
+
+	// No roles is an empty list, never null, so the page can treat it as one.
+	mux = http.NewServeMux()
+	serverWith(holding()).Routes(mux)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/me", nil))
+	var raw map[string]json.RawMessage
+	_ = json.NewDecoder(rec.Body).Decode(&raw)
+	if string(raw["roles"]) != "[]" {
+		t.Fatalf("roles = %s, want []", raw["roles"])
 	}
 
 	mux = http.NewServeMux()

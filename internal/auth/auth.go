@@ -1,15 +1,16 @@
-// Package auth decides what a signed-in person may do. The login itself (the
-// session, the identity provider, the local account) is authy's; this turns
-// who it says is signed in into one of four roles:
+// Package auth says which roles a signed-in person holds. The login itself
+// (the session, the identity provider, the local account) is authy's; this
+// turns the groups it reports into roles:
 //
-//	none     signed in, but not let in: sees a "no access" page and nothing else
 //	user     may see what is due and the library, and keep or unkeep titles
-//	curator  may also delete due titles by hand
-//	admin    everything, including settings and connections
+//	curator  may delete due titles by hand
+//	admin    may change settings and connections
 //
-// Roles come from groups at the identity provider, so who is who stays
-// there. With no group configured at all, everyone the provider lets in is
-// an admin, which is how reaparr behaved before roles existed.
+// A person holds every role whose group they are in, and nothing else. Each
+// route then lists the roles it accepts (see internal/api), so the roles are
+// not ordered: what an admin may do is whatever lists "admin". With no group
+// configured at all, everyone the provider lets in holds every role, which
+// is how reaparr behaved before roles existed.
 package auth
 
 import (
@@ -20,49 +21,56 @@ import (
 	"github.com/miista/authy"
 )
 
-// Role is what someone may do. A higher role may do everything a lower one may.
-type Role int
+// Role is a name an action may require.
+type Role string
 
 const (
-	None Role = iota
-	User
-	Curator
-	Admin
+	User    Role = "user"
+	Curator Role = "curator"
+	Admin   Role = "admin"
 )
 
-func (r Role) String() string {
-	switch r {
-	case User:
-		return "user"
-	case Curator:
-		return "curator"
-	case Admin:
-		return "admin"
-	}
-	return "none"
-}
+// All is every role, in the order they are reported.
+var All = []Role{User, Curator, Admin}
 
-// AtLeast reports whether r may do what min may.
-func (r Role) AtLeast(min Role) bool { return r >= min }
-
-// Principal is who a request is from and what they may do.
+// Principal is who a request is from and the roles they hold.
 type Principal struct {
 	Sub   string
 	Name  string
 	Email string
-	Role  Role
+	Roles []Role
 	Local bool // signed in with the local account rather than the provider
 }
 
-// Config says how groups map to roles. A group left empty grants its role to
-// nobody, except UserGroup: empty means anyone the provider lets in is at
-// least a user. With all three empty, everyone is an admin.
+// Has reports whether the person holds the role.
+func (p Principal) Has(r Role) bool {
+	for _, have := range p.Roles {
+		if have == r {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAny reports whether the person holds at least one of the roles.
+func (p Principal) HasAny(roles ...Role) bool {
+	for _, r := range roles {
+		if p.Has(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// Config names the group behind each role. A group left empty gives its role
+// to nobody, except UserGroup: empty means anyone the provider lets in is a
+// user. With all three empty, everyone holds every role.
 type Config struct {
 	UserGroup    string
 	CuratorGroup string
 	AdminGroup   string
 	// GateOn is false when there is no login at all (REAPARR_AUTH_DISABLED):
-	// the app is then behind something else, and everyone is an admin.
+	// the app is then behind something else, and everyone holds every role.
 	GateOn bool
 }
 
@@ -97,33 +105,33 @@ func New(cfg Config) *Auth {
 // signed in: with a login in place, "no identity" must never read as "anyone".
 func (a *Auth) Principal(r *http.Request) (Principal, bool) {
 	if !a.cfg.GateOn {
-		return Principal{Sub: "anonymous", Name: "anonymous", Role: Admin, Local: true}, true
+		return Principal{Sub: "anonymous", Name: "anonymous", Roles: All, Local: true}, true
 	}
 	u, ok := a.from(r)
 	if !ok || u.Subject == "" {
 		return Principal{}, false
 	}
-	return Principal{Sub: u.Subject, Name: u.Name, Email: u.Email, Local: isLocal(u), Role: a.roleFor(u)}, true
+	return Principal{Sub: u.Subject, Name: u.Name, Email: u.Email, Local: isLocal(u), Roles: a.rolesFor(u)}, true
 }
 
 // isLocal reports whether the person signed in with the local account. authy
 // reserves the "local:" subject namespace for it.
 func isLocal(u authy.User) bool { return strings.HasPrefix(u.Subject, "local:") }
 
-// roleFor is the role the identity provider's data gives. The highest
-// matching group wins.
-func (a *Auth) roleFor(u authy.User) Role {
-	switch {
-	case isLocal(u):
-		return Admin // the account made on first launch is the owner
-	case !a.cfg.Configured():
-		return Admin // no roles in use: as before roles existed
-	case a.cfg.AdminGroup != "" && u.InGroup(a.cfg.AdminGroup):
-		return Admin
-	case a.cfg.CuratorGroup != "" && u.InGroup(a.cfg.CuratorGroup):
-		return Curator
-	case a.cfg.UserGroup == "" || u.InGroup(a.cfg.UserGroup):
-		return User
+// rolesFor is every role the identity provider's groups give.
+func (a *Auth) rolesFor(u authy.User) []Role {
+	if isLocal(u) || !a.cfg.Configured() {
+		return All // the owner's account, or roles not in use: as before roles existed
 	}
-	return None
+	var roles []Role
+	if a.cfg.UserGroup == "" || u.InGroup(a.cfg.UserGroup) {
+		roles = append(roles, User)
+	}
+	if a.cfg.CuratorGroup != "" && u.InGroup(a.cfg.CuratorGroup) {
+		roles = append(roles, Curator)
+	}
+	if a.cfg.AdminGroup != "" && u.InGroup(a.cfg.AdminGroup) {
+		roles = append(roles, Admin)
+	}
+	return roles
 }
