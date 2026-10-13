@@ -67,6 +67,9 @@ type Sweeper interface {
 	JellyfinUsers() ([]JellyfinUser, error)
 	// SetKept keeps (keep=true) or unkeeps Radarr movies / Sonarr series.
 	SetKept(refs []LibraryRef, keep bool) error
+	// Kept reports whether each given title carries the keep tag right now,
+	// reading only the services the titles belong to.
+	Kept(refs []LibraryRef) (map[LibraryRef]bool, error)
 	// Poster returns a movie's / series' small poster image.
 	Poster(service string, id int) (io.ReadCloser, string, error)
 }
@@ -404,16 +407,16 @@ func (s *Server) handleLibraryKeep(w http.ResponseWriter, r *http.Request) {
 
 	// What is kept right now decides what each item means: keeping a kept
 	// title changes nothing (least of all its owner), and unkeeping one that is
-	// not kept changes nothing.
-	library, err := s.sweeper.Library()
+	// not kept changes nothing. Only the titles asked about are read.
+	state, err := s.sweeper.Kept(req.Items)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	kept := make(map[string]bool, len(library))
-	for _, it := range library {
-		if it.Kept {
-			kept[refKey(it.Service, it.ID)] = true
+	kept := make(map[string]bool, len(state))
+	for ref, k := range state {
+		if k {
+			kept[refKey(ref.Service, ref.ID)] = true
 		}
 	}
 	owners := s.keepers()

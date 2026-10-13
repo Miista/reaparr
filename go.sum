@@ -6,8 +6,8 @@ github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHP
 github.com/mattn/go-colorable v0.1.14/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
-github.com/miista/authy v0.1.0 h1:F8OovxyDJUo4ZANmHZF1qmFoCYfw+tSnPkP4T9BQXzY=
-github.com/miista/authy v0.1.0/go.mod h1:/HqAmvX74AFrhP/fYhY9bI5bmM5ln11nmYXHOQ2B7Zg=
+github.com/miista/authy v0.1.2 h1:O+ikh7V/t7GD0G29JGgQPBti7bHQeMCcnchVsv5ubUk=
+github.com/miista/authy v0.1.2/go.mod h1:zhFqLzwUFhdorYmGIM5dC+3FCKsDNHtVcbEQzG2WVKQ=
 github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=
 github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=
 github.com/rs/zerolog v1.35.1 h1:m7xQeoiLIiV0BCEY4Hs+j2NG4Gp2o2KPKmhnnLiazKI=

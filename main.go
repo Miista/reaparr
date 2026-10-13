@@ -110,7 +110,7 @@ func main() {
 	roles := auth.ConfigFromEnv(gate != nil)
 	// OIDC on with no role group would make everyone the provider admits an
 	// admin: refuse, unless REAPARR_ROLES_DISABLED=true says that is intended.
-	if err := roles.Check(gate != nil && os.Getenv("REAPARR_OIDC_ISSUER") != ""); err != nil {
+	if err := roles.Check(gate.OIDC()); err != nil {
 		logger.Fatal().Err(err).Msg("invalid role configuration")
 	}
 	switch {

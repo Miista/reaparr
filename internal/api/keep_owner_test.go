@@ -33,6 +33,19 @@ func (f *fakeLibrary) Library() ([]LibraryItem, error) {
 	return out, nil
 }
 
+func (f *fakeLibrary) Kept(refs []LibraryRef) (map[LibraryRef]bool, error) {
+	out := map[LibraryRef]bool{}
+	for _, r := range refs {
+		out[r] = false
+		for _, it := range f.items {
+			if it.Service == r.Service && it.ID == r.ID {
+				out[r] = it.Kept
+			}
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeLibrary) SetKept(refs []LibraryRef, keep bool) error {
 	if f.failSet {
 		return http.ErrAbortHandler
