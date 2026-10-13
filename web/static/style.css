@@ -308,6 +308,8 @@ html:not([data-authy]) .only-with-gate { display: none !important; }
   background-repeat: no-repeat; background-position: center; background-size: 14px 14px;
   box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 2px 8px rgba(0,0,0,.5);
 }
+.kept-by { font-size: 12px; color: var(--muted); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.keep-toggle:disabled { cursor: not-allowed; }
 .keep-toggle {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
   padding: 6px 6px 6px 12px; border-radius: 999px; border: 1px solid var(--border-2); background: var(--field);

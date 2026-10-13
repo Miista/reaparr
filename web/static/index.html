@@ -147,7 +147,7 @@
         <div class="chips">
           <button v-for="f in libraryFilters" :key="f.key" class="chip" :class="{ on: libraryFilter === f.key }" @click="libraryFilter = f.key">{{ f.label }}</button>
         </div>
-        <button class="btn" @click="loadLibrary" :disabled="libraryLoading" aria-label="Refresh">
+        <button class="btn" @click="loadLibrary()" :disabled="libraryLoading" aria-label="Refresh">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" :class="{ spin: libraryLoading }"><path d="M12 7a5 5 0 1 1-1.5-3.6M12 1.5v3h-3"></path></svg>
         </button>
       </div>
@@ -163,10 +163,12 @@
             <span class="cover-kind" :class="it.kind">{{ it.kind }}</span>
             <span class="cover-kept" v-if="it.kept" aria-label="Kept"></span>
           </div>
-          <button type="button" class="keep-toggle" role="switch" :aria-checked="it.kept" :class="{ on: it.kept }" @click="toggleKeep(it)" :disabled="libraryBusy">
+          <button type="button" class="keep-toggle" role="switch" :aria-checked="it.kept" :class="{ on: it.kept }" @click="toggleKeep(it)" :disabled="libraryBusy || (it.kept && !it.can_unkeep)"
+                  :title="it.kept && !it.can_unkeep ? 'Kept by someone else — only they or an admin can unkeep it' : ''">
             <span>Keep</span>
             <span class="track"><span class="knob"></span></span>
           </button>
+          <span class="kept-by" v-if="it.kept_by">Kept by {{ it.kept_by }}</span>
         </div>
       </div>
 

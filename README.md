@@ -262,7 +262,8 @@ Every list includes admin, so an admin may do everything a user may:
 
 | Action | Roles that may | Role comes from |
 |---|---|---|
-| see what is due and the library, keep and unkeep | user, admin | `REAPARR_ROLE_USER_GROUP` → user |
+| see what is due and the library, keep a title | user, admin | `REAPARR_ROLE_USER_GROUP` → user |
+| unkeep a title | whoever kept it, or admin | see "Who may unkeep" below |
 | delete due titles by hand | admin | `REAPARR_ROLE_ADMIN_GROUP` → admin |
 | change settings and connections | admin | `REAPARR_ROLE_ADMIN_GROUP` → admin |
 
@@ -271,6 +272,12 @@ roles existed. With either set, someone in neither group is signed in but
 sees only a "no access" page. `REAPARR_ROLE_USER_GROUP` may be left empty to
 make anyone the provider lets in a user. The local account, when enabled,
 holds every role. The scheduled sweep is not affected by roles.
+
+**Who may unkeep.** Reaparr records who kept a title (in its own
+`config.json`, next to the keep tag in Radarr/Sonarr). Only that person or an
+admin can unkeep it, so a user can take back their own keep without asking
+anyone. A title kept before this was recorded, or by hand in Radarr/Sonarr,
+has no owner and only an admin can unkeep it. Only admins see who kept what.
 
 Every route checks the roles on the server, so the page hiding a button is a
 courtesy, not the control. A person's groups are read when they sign in and a

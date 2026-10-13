@@ -423,9 +423,10 @@ function App() {
       if (this.tab === 'library' && !initial) this.loadLibrary();
     },
 
-    async loadLibrary() {
+    // keepError keeps the message already shown (a refused unkeep) through the re-read.
+    async loadLibrary(keepError = false) {
       this.libraryLoading = true;
-      this.libraryError = '';
+      if (!keepError) this.libraryError = '';
       try {
         const res = await fetch('/api/library');
         const data = await res.json().catch(() => ({}));
@@ -443,6 +444,9 @@ function App() {
     // unknown because Jellyfin couldn't be checked. With the daemon off
     // nothing is deleted automatically, so no confirmation is needed.
     async toggleKeep(it) {
+      // Only whoever kept a title, or an admin, may unkeep it (the server
+      // enforces it; this just doesn't offer what would be refused).
+      if (it.kept && !it.can_unkeep) return;
       if (it.kept && this.daemonEnabled && (it.watch === 'due' || !it.watch)) {
         const when = this.nextRun
           ? `in ${humanCountdown(Math.max(60, (new Date(this.nextRun) - Date.now()) / 1000))}`
@@ -481,12 +485,18 @@ function App() {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Update failed.');
+        if ((data.refused || []).length) {
+          // Some of it was someone else's to unkeep: re-read to show the truth.
+          this.libraryError = 'Only whoever kept this, or an admin, can unkeep it.';
+          await Promise.all([this.loadLibrary(true), this.loadDue()]);
+          return;
+        }
         // The backend has already updated its due list before responding.
         await this.loadDue();
       } catch (err) {
         items.forEach((it, i) => { it.kept = before[i]; });
         this.libraryError = err.message;
-        await Promise.all([this.loadLibrary(), this.loadDue()]);
+        await Promise.all([this.loadLibrary(true), this.loadDue()]);
       } finally {
         this.libraryBusy = false;
       }

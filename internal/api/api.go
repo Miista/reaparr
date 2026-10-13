@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -81,6 +82,11 @@ type LibraryItem struct {
 	// Watch is what unkeeping would do: "due" (would be deleted on the next
 	// scheduled run), "waiting", "unwatched", or "" if unknown.
 	Watch string `json:"watch"`
+	// CanUnkeep and KeptBy are filled in per request (see handleLibrary), not
+	// by the sweeper: whether the person asking may unkeep this kept title,
+	// and, for admins only, who kept it.
+	CanUnkeep bool   `json:"can_unkeep"`
+	KeptBy    string `json:"kept_by,omitempty"`
 }
 
 // JellyfinUser is one Jellyfin account, as offered by the user picker.
@@ -143,6 +149,12 @@ type Server struct {
 	reload  ReloadFunc
 	auth    Authorizer
 	log     zerolog.Logger
+
+	// keepMu serialises keep/unkeep: each request reads which titles are kept,
+	// decides who may change what, then changes the tags and the keeper
+	// records, and two of those interleaving could disagree about who owns a
+	// title.
+	keepMu sync.Mutex
 }
 
 // New builds a Server.
@@ -305,7 +317,50 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	s.annotateKeepers(who(r), items)
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// refKey is how a title is named in the keeper records.
+func refKey(service string, id int) string { return service + ":" + strconv.Itoa(id) }
+
+// keepers returns a copy of the keeper records.
+func (s *Server) keepers() map[string]store.Keeper {
+	out := map[string]store.Keeper{}
+	s.store.View(func(st store.State) {
+		for k, v := range st.Keepers {
+			out[k] = v
+		}
+	})
+	return out
+}
+
+// mayUnkeep: an admin may unkeep any title; anyone else only one they kept
+// themselves. A kept title with no recorded owner (kept before owners were
+// recorded, or by hand in Radarr/Sonarr) is therefore an admin's to unkeep.
+func mayUnkeep(p auth.Principal, owner store.Keeper, owned bool) bool {
+	return p.Has(auth.Admin) || (owned && owner.Sub != "" && owner.Sub == p.Sub)
+}
+
+// annotateKeepers fills in, for the person asking, which kept titles they may
+// unkeep and, for admins only, who kept each. The library is otherwise the
+// same for everyone.
+func (s *Server) annotateKeepers(p auth.Principal, items []LibraryItem) {
+	owners := s.keepers()
+	admin := p.Has(auth.Admin)
+	for i := range items {
+		if !items[i].Kept {
+			continue
+		}
+		owner, owned := owners[refKey(items[i].Service, items[i].ID)]
+		items[i].CanUnkeep = mayUnkeep(p, owner, owned)
+		if admin && owned {
+			items[i].KeptBy = owner.Name
+			if items[i].KeptBy == "" {
+				items[i].KeptBy = owner.Sub
+			}
+		}
+	}
 }
 
 // handleJellyfinUsers lists the Jellyfin accounts for the user picker.
@@ -336,11 +391,98 @@ func (s *Server) handleLibraryKeep(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "items is required"})
 		return
 	}
-	if err := s.sweeper.SetKept(req.Items, req.Keep); err != nil {
+	for _, ref := range req.Items {
+		if ref.Service != "radarr" && ref.Service != "sonarr" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unknown service %q", ref.Service)})
+			return
+		}
+	}
+	p := who(r)
+
+	s.keepMu.Lock()
+	defer s.keepMu.Unlock()
+
+	// What is kept right now decides what each item means: keeping a kept
+	// title changes nothing (least of all its owner), and unkeeping one that is
+	// not kept changes nothing.
+	library, err := s.sweeper.Library()
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	kept := make(map[string]bool, len(library))
+	for _, it := range library {
+		if it.Kept {
+			kept[refKey(it.Service, it.ID)] = true
+		}
+	}
+	owners := s.keepers()
+
+	var change, refused []LibraryRef
+	var changed, stale []string // keeper-record keys
+	seen := map[string]bool{}
+	for _, ref := range req.Items {
+		k := refKey(ref.Service, ref.ID)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		owner, owned := owners[k]
+		switch {
+		case req.Keep && kept[k]:
+			// already kept
+		case !req.Keep && !kept[k]:
+			if owned {
+				stale = append(stale, k) // the tag is gone; so is the reason to remember who kept it
+			}
+		case req.Keep, mayUnkeep(p, owner, owned):
+			change = append(change, ref)
+			changed = append(changed, k)
+		default:
+			refused = append(refused, ref)
+		}
+	}
+
+	if len(change) > 0 {
+		if err := s.sweeper.SetKept(change, req.Keep); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		s.log.Info().Str("by", p.Sub).Bool("keep", req.Keep).Int("titles", len(change)).Msg("kept titles changed")
+	}
+	if len(changed) > 0 || len(stale) > 0 {
+		if err := s.store.Update(func(st *store.State) {
+			if st.Keepers == nil {
+				st.Keepers = map[string]store.Keeper{}
+			}
+			for _, k := range changed {
+				if req.Keep {
+					st.Keepers[k] = store.Keeper{Sub: p.Sub, Name: p.Name}
+				} else {
+					delete(st.Keepers, k)
+				}
+			}
+			for _, k := range stale {
+				delete(st.Keepers, k)
+			}
+		}); err != nil {
+			s.log.Error().Err(err).Msg("recording who kept a title")
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "the change was made, but recording who kept it failed"})
+			return
+		}
+	}
+
+	switch {
+	case len(refused) > 0 && len(change) == 0:
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error":   "Only whoever kept this, or an admin, can unkeep it",
+			"refused": refused,
+		})
+	case len(refused) > 0:
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "refused": refused})
+	default:
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
 }
 
 // handleDeleteSelected deletes the given IDs (each re-checked live).

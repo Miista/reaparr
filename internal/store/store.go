@@ -74,10 +74,22 @@ func DefaultConnections() Connections {
 	}
 }
 
+// Keeper is who put a keep tag on a title through the dashboard. The tag
+// itself lives in Radarr/Sonarr and is all the sweep looks at; this only says
+// who may take it off again (see internal/api).
+type Keeper struct {
+	Sub  string `json:"sub"`  // the sign-in's stable subject, what ownership is decided on
+	Name string `json:"name"` // for display to admins; never used to decide anything
+}
+
 // State is the full persisted document.
 type State struct {
 	Settings    Settings    `json:"settings"`
 	Connections Connections `json:"connections"`
+	// Keepers maps "radarr:123" / "sonarr:45" to whoever kept that title. A
+	// kept title with no entry (kept before this was recorded, or by hand in
+	// Radarr/Sonarr) has no owner: only an admin may unkeep it.
+	Keepers map[string]Keeper `json:"keepers,omitempty"`
 }
 
 // Store guards State with a mutex and persists it to dataDir/config.json.
