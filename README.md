@@ -253,6 +253,28 @@ from the old account valid until they expire.)
 login off. The dashboard is then unprotected by reaparr itself, so keep it
 behind your proxy's auth.
 
+#### Roles (optional, OIDC only)
+
+With OIDC, who may do what can follow groups at the identity provider. Three
+variables name a group each; a person's highest matching group is their role:
+
+| Role | May | Variable |
+|---|---|---|
+| user | see what is due and the library, keep and unkeep titles | `REAPARR_ROLE_USER_GROUP` |
+| curator | also delete due titles by hand | `REAPARR_ROLE_CURATOR_GROUP` |
+| admin | also change settings and connections | `REAPARR_ROLE_ADMIN_GROUP` |
+
+With none of the three set, everyone the provider lets in is an admin, as
+before roles existed. With any set, someone in none of the groups is signed in
+but sees only a "no access" page. `REAPARR_ROLE_USER_GROUP` may be left empty
+to make anyone the provider lets in at least a user. The local account, when
+enabled, is always an admin. The scheduled sweep is not affected by roles.
+
+Every route checks the role on the server, so the page hiding a button is a
+courtesy, not the control. A person's groups are read when they sign in and a
+session lasts 12 hours without use, so a change at the provider can take up to
+that long to reach reaparr.
+
 #### OpenID Connect (optional)
 
 To sign in through an identity provider (Authelia, Authentik, Keycloak,

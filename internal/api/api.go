@@ -1,14 +1,17 @@
 // Package api implements reaparr's HTTP handlers: settings and
 // connections (with env-override reporting, mirroring automouse's
 // settings API), a dashboard preview of items due for deletion, and manual
-// per-item delete/skip actions. These handlers do no authentication
-// themselves: the authy login wraps the whole server in main.go (see the
-// Login section of this repo's README). With it turned off
-// (REAPARR_AUTH_DISABLED=true) this dashboard is unprotected and meant for a
-// LAN or a proxy that authenticates for it.
+// per-item delete/skip actions. The login itself is authy's, wrapped around
+// the whole server in main.go (see the Login section of this repo's README).
+// What a signed-in person may do is decided here, per route, from their role
+// (see internal/auth): a route is guarded in its handler's path, not in the
+// page, since a hidden button is not access control. With the login turned
+// off (REAPARR_AUTH_DISABLED=true) everyone is an admin and this dashboard is
+// meant for a LAN or a proxy that authenticates for it.
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,9 +22,15 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/Miista/reaparr/internal/auth"
 	"github.com/Miista/reaparr/internal/settings"
 	"github.com/Miista/reaparr/internal/store"
 )
+
+// Authorizer says who a request is from. Satisfied by *auth.Auth.
+type Authorizer interface {
+	Principal(*http.Request) (auth.Principal, bool)
+}
 
 // Sweeper is the subset of the main package's *sweeper this package needs —
 // defined here (rather than importing "main", which Go disallows) so the
@@ -132,34 +141,92 @@ type Server struct {
 	sweeper Sweeper
 	tester  ConnectionTester
 	reload  ReloadFunc
+	auth    Authorizer
 	log     zerolog.Logger
 }
 
 // New builds a Server.
-func New(st *store.Store, sw Sweeper, tester ConnectionTester, reload ReloadFunc, log zerolog.Logger) *Server {
+func New(st *store.Store, sw Sweeper, tester ConnectionTester, reload ReloadFunc, authn Authorizer, log zerolog.Logger) *Server {
 	return &Server{
 		store:   st,
 		sweeper: sw,
 		tester:  tester,
 		reload:  reload,
+		auth:    authn,
 		log:     log.With().Str("component", "api").Logger(),
 	}
 }
 
-// Routes registers all handlers on mux.
+// Routes registers all handlers on mux. The role next to each route is the
+// least that may call it; internal/api/guard_test.go pins this table.
 func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", s.handleHealthz)
-	mux.HandleFunc("/api/status", s.handleStatus)
-	mux.HandleFunc("/api/settings", s.handleSettings)
-	mux.HandleFunc("/api/connections", s.handleConnections)
-	mux.HandleFunc("/api/connections/test", s.handleTestConnection)
-	mux.HandleFunc("/api/due", s.handleDue)
-	mux.HandleFunc("/api/due/delete", s.handleDeleteDue)
-	mux.HandleFunc("/api/due/delete-selected", s.handleDeleteSelected)
-	mux.HandleFunc("/api/library", s.handleLibrary)
-	mux.HandleFunc("/api/library/keep", s.handleLibraryKeep)
-	mux.HandleFunc("/api/jellyfin/users", s.handleJellyfinUsers)
-	mux.HandleFunc("/api/poster/", s.handlePoster)
+	mux.HandleFunc("/api/me", s.handleMe)
+	// Seeing what is due and keeping things: every role that is let in.
+	mux.HandleFunc("/api/status", s.guard(auth.User, s.handleStatus))
+	mux.HandleFunc("/api/due", s.guard(auth.User, s.handleDue))
+	mux.HandleFunc("/api/library", s.guard(auth.User, s.handleLibrary))
+	mux.HandleFunc("/api/library/keep", s.guard(auth.User, s.handleLibraryKeep))
+	mux.HandleFunc("/api/poster/", s.guard(auth.User, s.handlePoster))
+	// Deleting by hand: curators. The scheduled sweep is not a request and
+	// is unaffected by roles.
+	mux.HandleFunc("/api/due/delete", s.guard(auth.Curator, s.handleDeleteDue))
+	mux.HandleFunc("/api/due/delete-selected", s.guard(auth.Curator, s.handleDeleteSelected))
+	// Settings and connections, including reading them (URLs and masked
+	// keys are still configuration): admins.
+	mux.HandleFunc("/api/settings", s.guard(auth.Admin, s.handleSettings))
+	mux.HandleFunc("/api/connections", s.guard(auth.Admin, s.handleConnections))
+	mux.HandleFunc("/api/connections/test", s.guard(auth.Admin, s.handleTestConnection))
+	mux.HandleFunc("/api/jellyfin/users", s.guard(auth.Admin, s.handleJellyfinUsers))
+}
+
+type principalKey struct{}
+
+// guard runs h only for someone signed in who may do what min may. Nobody
+// signed in is 401, so the page knows to sign in; signed in but not allowed
+// is 403.
+func (s *Server) guard(min auth.Role, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := s.auth.Principal(r)
+		switch {
+		case !ok:
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		case p.Role == auth.None || !p.Role.AtLeast(min):
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "You do not have access to this"})
+			return
+		}
+		h(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
+	}
+}
+
+// who is the signed-in person behind a guarded request, for the log.
+func who(r *http.Request) auth.Principal {
+	p, _ := r.Context().Value(principalKey{}).(auth.Principal)
+	return p
+}
+
+// handleMe tells the page who is signed in and what to show. It is open to
+// anyone signed in, including someone with no access, so the page can say so
+// instead of failing every call.
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	p, ok := s.auth.Principal(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sub":   p.Sub,
+		"name":  p.Name,
+		"email": p.Email,
+		"role":  p.Role.String(),
+		"local": p.Local,
+	})
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -290,6 +357,7 @@ func (s *Server) handleDeleteSelected(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	s.log.Info().Str("by", who(r).Sub).Int("deleted", result.Deleted).Int("skipped", result.Skipped).Int("failed", result.Failed).Msg("manual delete of selected items")
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -508,6 +576,7 @@ func (s *Server) handleDeleteDue(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	s.log.Info().Str("by", who(r).Sub).Str("id", req.ID).Msg("manual delete")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

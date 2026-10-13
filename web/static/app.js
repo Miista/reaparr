@@ -44,12 +44,33 @@ function humanSeconds(s) {
   return plural(s / 60, 'minute');
 }
 
+// ROLE_RANK orders the roles /api/me can answer with, lowest first. The
+// server enforces the same on every route (see internal/api); the page only
+// uses it to show what a person can actually do.
+const ROLE_RANK = { none: 0, user: 1, curator: 2, admin: 3 };
+
 function App() {
   return {
     tab: 'due',
     settingsTab: 'general', // 'general' | 'connections'
     services: SERVICES,
     now: Date.now(),
+
+    me: null, // { sub, name, email, role, local } from /api/me
+
+    // can reports whether the signed-in person may do what the role may.
+    can(role) {
+      return !!this.me && (ROLE_RANK[this.me.role] || 0) >= ROLE_RANK[role];
+    },
+
+    async loadMe() {
+      try {
+        const res = await fetch('/api/me');
+        this.me = res.ok ? await res.json() : { role: 'none' };
+      } catch {
+        this.me = { role: 'none' };
+      }
+    },
 
     due: [],
     dueLoading: false,
@@ -97,12 +118,22 @@ function App() {
     jellyfinUsersError: '',
 
     async mounted() {
+      // Who is signed in decides which pages exist, so it comes first.
+      await this.loadMe();
       this.applyRoute(true);
       window.addEventListener('hashchange', () => this.applyRoute());
       setInterval(() => { this.now = Date.now(); }, 30000);
       document.addEventListener('keydown', (e) => this.onDialogKey(e));
-      await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections(), this.loadLibrary(), this.loadJellyfinUsers()]);
-      this.testConfiguredConnections();
+      if (!this.can('user')) {
+        this.loaded = true;
+        return;
+      }
+      const loads = [this.loadStatus(), this.loadDue(), this.loadLibrary()];
+      // Settings and connections are an admin's; anyone else would only get
+      // a 403 for them, so they are not asked for.
+      if (this.can('admin')) loads.push(this.loadSettings(), this.loadConnections(), this.loadJellyfinUsers());
+      await Promise.all(loads);
+      if (this.can('admin')) this.testConfiguredConnections();
       // Only now — with status and connections loaded and the tests started
       // (they count as pending until done) — can problems be judged.
       this.loaded = true;
@@ -139,6 +170,9 @@ function App() {
     },
 
     get problems() {
+      // Connection tests are an admin's; for anyone else the only signal is
+      // the server's own missing-services list (see runState).
+      if (!this.can('admin')) return [];
       return this.requirements.filter((r) => r.state === 'fail' || r.state === 'missing');
     },
 
@@ -366,8 +400,12 @@ function App() {
     // bookmark or the back button lands on the same page.
 
     applyRoute(initial = false) {
+      if (!this.can('user')) {
+        this.tab = 'denied';
+        return;
+      }
       const [tab, sub] = location.hash.replace(/^#\/?/, '').split('/');
-      if (tab === 'library' || tab === 'settings') {
+      if (tab === 'library' || (tab === 'settings' && this.can('admin'))) {
         this.tab = tab;
       } else {
         this.tab = 'due';

@@ -32,6 +32,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/Miista/reaparr/internal/api"
+	"github.com/Miista/reaparr/internal/auth"
 	"github.com/Miista/reaparr/internal/settings"
 	"github.com/Miista/reaparr/internal/store"
 	"github.com/miista/authy"
@@ -52,6 +53,10 @@ var staticFiles embed.FS
 // dataDir is where config.json is persisted inside the container — mount a
 // volume here to keep dashboard-entered settings across restarts.
 const dataDir = "/app/data"
+
+// sessionTTL is how long a sign-in lasts without use, and so how long a change
+// of someone's groups at the provider can take to reach reaparr.
+const sessionTTL = 12 * time.Hour
 
 func main() {
 	st, err := store.Open(dataDir)
@@ -83,7 +88,33 @@ func main() {
 		go live.RefreshPreview()
 	}
 
-	apiServer := api.New(st, live, tester, reloadAndRefresh, logger)
+	// Login gate: a local account created on first launch, replaced by OIDC when
+	// the REAPARR_OIDC_* variables are set. All of it is configured by REAPARR_*
+	// env vars and owned by authy (state lives in /app/data/auth).
+	// REAPARR_AUTH_DISABLED=true turns it off: gate is nil and Wrap leaves the
+	// handler unchanged. Misconfigured: refuse to start rather than serve the
+	// dashboard unprotected.
+	//
+	// reaparr asks the provider for groups, which is how user, curator and
+	// admin are told apart (see internal/auth). Sessions are shorter than
+	// authy's week because a person's groups are only read when they sign in:
+	// a change at the provider reaches reaparr at the next sign-in, so this
+	// is also how long a demotion can take.
+	gate, err := authy.FromEnv(context.Background(), "reaparr",
+		authy.WithScopes("openid", "profile", "email", "groups"),
+		authy.WithSessionTTL(sessionTTL))
+	if err != nil {
+		logger.Fatal().Err(err).Msg("invalid auth configuration")
+	}
+	roles := auth.ConfigFromEnv(gate != nil)
+	switch {
+	case gate == nil:
+		logger.Warn().Msg("login is OFF (REAPARR_AUTH_DISABLED): everyone who can reach this port is an admin")
+	case !roles.Configured():
+		logger.Warn().Msg("no REAPARR_ROLE_*_GROUP is set: everyone who signs in is an admin")
+	}
+
+	apiServer := api.New(st, live, tester, reloadAndRefresh, auth.New(roles), logger)
 	mux := http.NewServeMux()
 	apiServer.Routes(mux)
 	static, err := fs.Sub(staticFiles, "web/static")
@@ -91,17 +122,6 @@ func main() {
 		logger.Fatal().Err(err).Msg("embedded dashboard assets missing")
 	}
 	mux.Handle("/", noCache(http.FileServer(http.FS(static))))
-
-	// Login gate: a local account created on first launch, replaced by OIDC when
-	// the REAPARR_OIDC_* variables are set. All of it is configured by REAPARR_*
-	// env vars and owned by authy (state lives in /app/data/auth).
-	// REAPARR_AUTH_DISABLED=true turns it off: gate is nil and Wrap leaves the
-	// handler unchanged. Misconfigured: refuse to start rather than serve the
-	// dashboard unprotected.
-	gate, err := authy.FromEnv(context.Background(), "reaparr")
-	if err != nil {
-		logger.Fatal().Err(err).Msg("invalid auth configuration")
-	}
 
 	httpServer := &http.Server{
 		Addr:              addr,
