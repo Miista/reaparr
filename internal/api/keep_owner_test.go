@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -36,10 +38,9 @@ func (f *fakeLibrary) Library() ([]LibraryItem, error) {
 func (f *fakeLibrary) Kept(refs []LibraryRef) (map[LibraryRef]bool, error) {
 	out := map[LibraryRef]bool{}
 	for _, r := range refs {
-		out[r] = false
 		for _, it := range f.items {
 			if it.Service == r.Service && it.ID == r.ID {
-				out[r] = it.Kept
+				out[r] = it.Kept // a title not in the library stays out, like the real thing
 			}
 		}
 	}
@@ -351,5 +352,84 @@ func TestMayUnkeep(t *testing.T) {
 		if got := mayUnkeep(tc.who, tc.owner, tc.has); got != tc.want {
 			t.Errorf("%s: mayUnkeep = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// breakStore makes every later save of the store fail: the temp file it
+// writes first is a directory.
+func (e *keepEnv) breakStore() {
+	e.t.Helper()
+	if err := os.Mkdir(filepath.Join(e.dir, "config.json.tmp"), 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func TestKeepWhoseOwnerCannotBeRecordedIsNotKept(t *testing.T) {
+	e := newKeepEnv(t, movie(1, false))
+	e.as_(alice)
+	e.breakStore()
+	if code, _ := e.keep(true, ref(1)); code != http.StatusInternalServerError {
+		t.Fatalf("keep with a failing store: %d, want 500", code)
+	}
+	if len(e.lib.calls) != 0 || e.lib.items[0].Kept {
+		t.Fatal("the tag must not be set without an owner to record: the keeper would be locked out of unkeeping")
+	}
+}
+
+func TestAFailedTagUndoesTheRecordedOwner(t *testing.T) {
+	e := newKeepEnv(t, movie(1, false))
+	e.as_(alice)
+	e.lib.failSet = true
+	e.keep(true, ref(1))
+	if _, ok := e.keeper(1); ok {
+		t.Fatal("an owner was recorded for a title that did not get the tag")
+	}
+}
+
+func TestUnkeepSucceedsEvenIfForgettingTheOwnerFails(t *testing.T) {
+	e := newKeepEnv(t, movie(1, false))
+	e.as_(alice)
+	e.keep(true, ref(1))
+	e.breakStore()
+	if code, _ := e.keep(false, ref(1)); code != http.StatusOK {
+		t.Fatalf("unkeep: %d, want 200: the tag is gone, which is what was asked", code)
+	}
+	if e.lib.items[0].Kept {
+		t.Fatal("the title is still kept")
+	}
+}
+
+func TestTitlesNotInTheLibraryAreIgnored(t *testing.T) {
+	e := newKeepEnv(t, movie(1, false))
+	e.as_(alice)
+
+	if code, _ := e.keep(true, ref(99)); code != http.StatusNotFound {
+		t.Fatalf("keeping a title that does not exist: %d, want 404", code)
+	}
+	if _, ok := e.keeper(99); ok || len(e.lib.calls) != 0 {
+		t.Fatal("nothing may be tagged or recorded for a title that does not exist")
+	}
+
+	// A record for a title that has vanished is not ours to judge by its
+	// absence: it stays until the title can be seen again.
+	if err := e.st.Update(func(s *store.State) {
+		s.Keepers = map[string]store.Keeper{"radarr:99": {Sub: "sub-alice", Name: "Alice"}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.keep(false, ref(99))
+	if _, ok := e.keeper(99); !ok {
+		t.Fatal("an unkeep of an unknown title must not delete its record")
+	}
+
+	// Mixed with a real title, the unknown one is skipped and the rest proceeds.
+	if code, _ := e.keep(true, ref(99), ref(1)); code != http.StatusOK {
+		t.Fatalf("mixed request: %d, want 200", code)
+	}
+	if !e.lib.items[0].Kept {
+		t.Fatal("the title that exists should have been kept")
+	}
+	if len(e.lib.calls) != 1 || len(e.lib.calls[0].refs) != 1 || e.lib.calls[0].refs[0] != ref(1) {
+		t.Fatalf("only the real title may be tagged, got %+v", e.lib.calls)
 	}
 }

@@ -380,6 +380,27 @@ func (s *Server) handleJellyfinUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"users": users})
 }
 
+// setKeepers records k as the keeper of every title in keys.
+func (s *Server) setKeepers(keys []string, k store.Keeper) error {
+	return s.store.Update(func(st *store.State) {
+		if st.Keepers == nil {
+			st.Keepers = map[string]store.Keeper{}
+		}
+		for _, key := range keys {
+			st.Keepers[key] = k
+		}
+	})
+}
+
+// dropKeepers forgets who kept each title in keys.
+func (s *Server) dropKeepers(keys []string) error {
+	return s.store.Update(func(st *store.State) {
+		for _, key := range keys {
+			delete(st.Keepers, key)
+		}
+	})
+}
+
 // handleLibraryKeep keeps or unkeeps library items.
 func (s *Server) handleLibraryKeep(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -424,12 +445,17 @@ func (s *Server) handleLibraryKeep(w http.ResponseWriter, r *http.Request) {
 	var change, refused []LibraryRef
 	var changed, stale []string // keeper-record keys
 	seen := map[string]bool{}
+	unknown := 0
 	for _, ref := range req.Items {
 		k := refKey(ref.Service, ref.ID)
 		if seen[k] {
 			continue
 		}
 		seen[k] = true
+		if _, found := state[ref]; !found {
+			unknown++ // not in the library: nothing to keep, and no record to trust or drop
+			continue
+		}
 		owner, owned := owners[k]
 		switch {
 		case req.Keep && kept[k]:
@@ -446,32 +472,37 @@ func (s *Server) handleLibraryKeep(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if unknown == len(seen) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such title in the library"})
+		return
+	}
+
+	// Keeping records the owner first and then sets the tag, undoing the record
+	// if the tag fails: a tag with no owner would lock the keeper out, a record
+	// with no tag is harmless. Unkeeping goes the other way, tag first; a record
+	// left behind by a failed cleanup is dropped by the next unkeep or keep.
+	if req.Keep && len(changed) > 0 {
+		if err := s.setKeepers(changed, store.Keeper{Sub: p.Sub, Name: p.Name}); err != nil {
+			s.log.Error().Err(err).Msg("recording who kept a title")
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "recording who kept it failed; nothing was kept"})
+			return
+		}
+	}
 	if len(change) > 0 {
 		if err := s.sweeper.SetKept(change, req.Keep); err != nil {
+			if req.Keep {
+				if derr := s.dropKeepers(changed); derr != nil {
+					s.log.Error().Err(derr).Msg("forgetting who kept a title that was not kept")
+				}
+			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 		s.log.Info().Str("by", p.Sub).Bool("keep", req.Keep).Int("titles", len(change)).Msg("kept titles changed")
 	}
-	if len(changed) > 0 || len(stale) > 0 {
-		if err := s.store.Update(func(st *store.State) {
-			if st.Keepers == nil {
-				st.Keepers = map[string]store.Keeper{}
-			}
-			for _, k := range changed {
-				if req.Keep {
-					st.Keepers[k] = store.Keeper{Sub: p.Sub, Name: p.Name}
-				} else {
-					delete(st.Keepers, k)
-				}
-			}
-			for _, k := range stale {
-				delete(st.Keepers, k)
-			}
-		}); err != nil {
-			s.log.Error().Err(err).Msg("recording who kept a title")
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "the change was made, but recording who kept it failed"})
-			return
+	if !req.Keep && len(changed)+len(stale) > 0 {
+		if err := s.dropKeepers(append(changed, stale...)); err != nil {
+			s.log.Error().Err(err).Msg("forgetting who kept a title")
 		}
 	}
 

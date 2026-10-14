@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -268,15 +269,23 @@ func (a *arrClient) poster(svc arrService, id int) (io.ReadCloser, string, error
 // right now. Only the services the titles belong to are read, and nothing is
 // said about watch state: this is for deciding what a keep or unkeep request
 // means, not for the Library tab. A title that is not in its service's
-// library is reported as not kept.
+// library is left out of the result (unknown, which is not the same as not
+// kept), and a service that is not configured is an error.
 func (s *sweeper) keptState(refs []libraryItem) (map[libraryItem]bool, error) {
 	out := make(map[libraryItem]bool, len(refs))
 	need := map[arrService]bool{}
+	wanted := map[libraryItem]bool{}
 	for _, r := range refs {
 		need[r.service] = true
-		out[r] = false
+		wanted[r] = true
 	}
-	if need[serviceRadarr] && s.arr.hasRadarr() {
+	if need[serviceRadarr] && !s.arr.hasRadarr() {
+		return nil, errors.New("radarr is not configured")
+	}
+	if need[serviceSonarr] && !s.arr.hasSonarr() {
+		return nil, errors.New("sonarr is not configured")
+	}
+	if need[serviceRadarr] {
 		tag, _, err := s.arr.findTag(serviceRadarr, s.keepTag)
 		if err != nil {
 			return nil, fmt.Errorf("reading radarr's tags: %w", err)
@@ -287,12 +296,12 @@ func (s *sweeper) keptState(refs []libraryItem) (map[libraryItem]bool, error) {
 		}
 		for _, m := range movies {
 			ref := libraryItem{service: serviceRadarr, id: m.ID}
-			if _, wanted := out[ref]; wanted {
+			if wanted[ref] {
 				out[ref] = hasTag(m.Tags, tag)
 			}
 		}
 	}
-	if need[serviceSonarr] && s.arr.hasSonarr() {
+	if need[serviceSonarr] {
 		tag, _, err := s.arr.findTag(serviceSonarr, s.keepTag)
 		if err != nil {
 			return nil, fmt.Errorf("reading sonarr's tags: %w", err)
@@ -303,7 +312,7 @@ func (s *sweeper) keptState(refs []libraryItem) (map[libraryItem]bool, error) {
 		}
 		for _, sr := range series {
 			ref := libraryItem{service: serviceSonarr, id: sr.ID}
-			if _, wanted := out[ref]; wanted {
+			if wanted[ref] {
 				out[ref] = hasTag(sr.Tags, tag)
 			}
 		}
