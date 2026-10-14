@@ -791,6 +791,11 @@ func applySettingsPatch(st *store.Settings, incoming map[string]any) {
 			st.DaemonEnabled = v
 		}
 	}
+	if !resolved.IsManaged("remove_ended_series") {
+		if v, ok := incoming["remove_ended_series"].(bool); ok {
+			st.RemoveEndedSeries = v
+		}
+	}
 }
 
 // applyConnectionsPatch applies whitelisted fields from incoming onto st.
@@ -843,6 +848,7 @@ func publicSettings(resolved settings.Resolved) map[string]any {
 			"movies_grace_period": st.MoviesGracePeriod,
 			"tv_grace_period":     st.TVGracePeriod,
 			"daemon_enabled":      st.DaemonEnabled,
+			"remove_ended_series": st.RemoveEndedSeries,
 			"keep_tag":            st.KeepTag,
 			"jellyfin_users":      st.JellyfinUsers,
 		},

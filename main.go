@@ -274,6 +274,7 @@ func buildSweeper(st *store.Store, httpClient *http.Client, logger zerolog.Logge
 		tvGracePeriod:     tvGrace,
 		schedule:          schedule,
 		daemonEnabled:     cfg.DaemonEnabled,
+		removeEndedSeries: cfg.RemoveEndedSeries,
 		keepTag:           keepTag,
 		jellyfinUsers:     parseUserList(cfg.JellyfinUsers),
 		log:               withComponent(logger, "sweep"),

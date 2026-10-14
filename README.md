@@ -179,6 +179,7 @@ setting's key upper-cased, with `.` replaced by `_`.
 | `REAPARR_SETTING_KEEP_TAG` | `reaparr-keep` | Radarr/Sonarr tag marking keepers — see "Keepers" below |
 | `REAPARR_SETTING_JELLYFIN_USERS` | — (everyone) | Comma-separated Jellyfin usernames or user IDs whose watched state counts — both their played items and their playback events. Any one listed user having watched something is enough. Empty means every user. If none of the listed users exist, sweeps are skipped rather than falling back to everyone. Also settable from the dashboard's Watchers card |
 | `REAPARR_SETTING_DAEMON_ENABLED` | `true` | Whether the scheduled sweep deletes automatically. When `false`, nothing is deleted on schedule — the dashboard still lists what's ripe for deletion and you delete from there. An unparseable value counts as `false` |
+| `REAPARR_SETTING_REMOVE_ENDED_SERIES` | `false` | When a season delete leaves a series that Sonarr reports as ended with no episode files in any season (specials included), also delete the series from Sonarr, folder included, without an import-list exclusion. Series with the keep tag are never removed. An unparseable value counts as `false` |
 
 Both grace-period variables accept Go duration strings (`36h`, `168h`,
 `30h30m`) plus `d` (days) and `w` (weeks) suffixes — e.g. `7d`, `2w`.

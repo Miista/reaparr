@@ -25,6 +25,10 @@ type Settings struct {
 	// deleted automatically — the dashboard still shows what's due, and
 	// deletions happen only via its buttons.
 	DaemonEnabled bool `json:"daemon_enabled"`
+	// RemoveEndedSeries makes a season delete also remove the series from
+	// Sonarr when it has ended and no season has an episode file left. Off by
+	// default: it deletes a Sonarr entry nobody is watching.
+	RemoveEndedSeries bool `json:"remove_ended_series"`
 	// KeepTag is the Radarr/Sonarr tag that marks a movie or series as a
 	// keeper: reaparr never deletes anything carrying it.
 	KeepTag string `json:"keep_tag"`

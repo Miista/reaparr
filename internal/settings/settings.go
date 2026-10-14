@@ -69,6 +69,12 @@ func Resolve(persisted store.Settings) Resolved {
 		enabled, err := strconv.ParseBool(v)
 		r.Settings.DaemonEnabled = err == nil && enabled
 	})
+	// Off unless explicitly true, for the same reason: an unparseable value
+	// must not start deleting series.
+	apply("remove_ended_series", func(v string) {
+		enabled, err := strconv.ParseBool(v)
+		r.Settings.RemoveEndedSeries = err == nil && enabled
+	})
 
 	return r
 }
