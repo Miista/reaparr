@@ -55,7 +55,7 @@ const MAY = {
 
 function App() {
   return {
-    tab: 'due',
+    tab: 'library',
     settingsTab: 'general', // 'general' | 'connections'
     services: SERVICES,
     now: Date.now(),
@@ -401,7 +401,7 @@ function App() {
     },
 
     // --- Routing ----------------------------------------------------------
-    // The current page lives in the URL hash (#/due, #/library,
+    // The current page lives in the URL hash (#/library, #/due,
     // #/settings/general, #/settings/connections), so a refresh, a
     // bookmark or the back button lands on the same page.
 
@@ -411,10 +411,10 @@ function App() {
         return;
       }
       const [tab, sub] = location.hash.replace(/^#\/?/, '').split('/');
-      if (tab === 'library' || (tab === 'settings' && this.can('configure'))) {
+      if (tab === 'due' || (tab === 'settings' && this.can('configure'))) {
         this.tab = tab;
       } else {
-        this.tab = 'due';
+        this.tab = 'library';
       }
       if (tab === 'settings') {
         this.settingsTab = sub === 'connections' ? 'connections' : 'general';
