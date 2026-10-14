@@ -110,6 +110,29 @@ func TestResolve_DaemonEnabled(t *testing.T) {
 	}
 }
 
+func TestResolve_RemoveEndedSeries(t *testing.T) {
+	for _, tt := range []struct {
+		env  string
+		want bool
+	}{
+		{"true", true},
+		{"1", true},
+		{"false", false},
+		{"maybe", false}, // unparseable fails safe: nothing is removed
+	} {
+		t.Run(tt.env, func(t *testing.T) {
+			t.Setenv("REAPARR_SETTING_REMOVE_ENDED_SERIES", tt.env)
+			got := Resolve(store.Settings{RemoveEndedSeries: !tt.want})
+			if got.Settings.RemoveEndedSeries != tt.want {
+				t.Errorf("RemoveEndedSeries = %v, want %v", got.Settings.RemoveEndedSeries, tt.want)
+			}
+			if !got.IsManaged("remove_ended_series") {
+				t.Error("remove_ended_series not reported as env-managed")
+			}
+		})
+	}
+}
+
 func TestResolve_EmptyEnvVarDoesNotCountAsSet(t *testing.T) {
 	t.Setenv("REAPARR_SETTING_LOG_LEVEL", "")
 	got := Resolve(store.Settings{LogLevel: "info"})

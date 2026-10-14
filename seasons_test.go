@@ -37,6 +37,10 @@ type fakeSonarr struct {
 	seriesTags        []int    // tags on series 7
 	tagsFail          bool     // GET /api/v3/tag returns 500
 	editorBody        map[string]any
+	ended             bool   // series 7 is reported as ended
+	specialsFiles     int    // episode files left in season 0
+	seriesReadFails   bool   // GET /api/v3/series/7 returns 500 once a delete happened
+	seriesDeleteQuery string // query string of the series DELETE
 }
 
 func newFakeSonarr(t *testing.T, episodes []sonarrEpisode) (*fakeSonarr, *httptest.Server) {
@@ -76,7 +80,19 @@ func newFakeSonarr(t *testing.T, episodes []sonarrEpisode) (*fakeSonarr, *httpte
 			json.NewDecoder(r.Body).Decode(&body)
 			f.unmonitoredEpIDs = append(f.unmonitoredEpIDs, body.EpisodeIDs...)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series/7":
-			w.Write([]byte(`{"id":7,"seasons":[{"seasonNumber":1,"monitored":true}]}`))
+			if f.seriesReadFails && len(f.deletedFileIDs) > 0 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			// Season 1's files are gone by the time this is read after a delete.
+			json.NewEncoder(w).Encode(map[string]any{
+				"id": 7, "ended": f.ended, "tags": f.seriesTags,
+				"statistics": map[string]int{"episodeFileCount": f.specialsFiles},
+				"seasons": []map[string]any{
+					{"seasonNumber": 0, "monitored": false, "statistics": map[string]int{"episodeFileCount": f.specialsFiles}},
+					{"seasonNumber": 1, "monitored": true, "statistics": map[string]int{"episodeFileCount": 0}},
+				},
+			})
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v3/series/7":
 			f.seasonPuts++
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v3/episodefile/bulk":
@@ -85,6 +101,9 @@ func newFakeSonarr(t *testing.T, episodes []sonarrEpisode) (*fakeSonarr, *httpte
 			}
 			json.NewDecoder(r.Body).Decode(&body)
 			f.deletedFileIDs = append(f.deletedFileIDs, body.EpisodeFileIDs...)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v3/series/7":
+			f.deletedSeries = true
+			f.seriesDeleteQuery = r.URL.RawQuery
 		case r.Method == http.MethodDelete:
 			f.deletedSeries = true
 		default:

@@ -313,6 +313,26 @@
         </div>
       </section>
 
+      <section class="card" style="--hue: 20">
+        <div class="accent"></div>
+        <div class="card-head solo">
+          <div class="card-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h12M8 6V4.5h4V6M5.5 6l.7 9.5h7.6l.7-9.5"></path></svg></div>
+          <div class="card-text">
+            <h2>Remove ended series</h2>
+            <p>When a deleted season leaves an ended series with no episode files at all, also remove the series from Sonarr, folder included. Series with the keep tag are never removed.</p>
+          </div>
+          <div class="switch-wrap">
+            <button type="button" class="switch" role="switch" :aria-checked="!!settings.values.remove_ended_series"
+                    :class="{ on: settings.values.remove_ended_series }" :disabled="!!settings.env_managed.remove_ended_series"
+                    @click="settings.values.remove_ended_series = !settings.values.remove_ended_series">
+              Enabled
+              <span class="track"><span class="knob"></span></span>
+            </button>
+            <span class="lock-label" v-if="settings.env_managed.remove_ended_series"><svg width="12" height="13" viewBox="0 0 12 13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="5.5" width="9" height="6.5" rx="1.5"></rect><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"></path></svg>Managed by {{ settings.env_managed.remove_ended_series }}</span>
+          </div>
+        </div>
+      </section>
+
       <!-- Shown only when the login gate is on: /auth/client.js (see <head>) marks
            the page, and style.css hides .only-with-gate otherwise. -->
       <section class="card only-with-gate" style="--hue: 200">

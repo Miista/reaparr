@@ -221,6 +221,53 @@ func (a *arrClient) deleteEpisodeFiles(episodeFileIDs []int) error {
 	return nil
 }
 
+// sonarrSeriesDetail is the subset of one Sonarr series needed to decide
+// whether an ended series has nothing left on disk.
+type sonarrSeriesDetail struct {
+	ID         int   `json:"id"`
+	Tags       []int `json:"tags"`
+	Ended      bool  `json:"ended"`
+	Statistics struct {
+		EpisodeFileCount int `json:"episodeFileCount"`
+	} `json:"statistics"`
+	Seasons []struct {
+		SeasonNumber int `json:"seasonNumber"`
+		Statistics   struct {
+			EpisodeFileCount int `json:"episodeFileCount"`
+		} `json:"statistics"`
+	} `json:"seasons"`
+}
+
+// emptyAndEnded reports whether the series has ended and not one season,
+// specials included, still has an episode file.
+func (d sonarrSeriesDetail) emptyAndEnded() bool {
+	if !d.Ended || d.Statistics.EpisodeFileCount != 0 {
+		return false
+	}
+	for _, s := range d.Seasons {
+		if s.Statistics.EpisodeFileCount != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *arrClient) sonarrSeriesByID(id int) (sonarrSeriesDetail, error) {
+	var series sonarrSeriesDetail
+	err := a.get(fmt.Sprintf("%s/api/v3/series/%d", a.sonarrURL, id), a.sonarrAPIKey, &series)
+	return series, err
+}
+
+// deleteSeries removes a series from Sonarr, folder included, via
+// DELETE /api/v3/series/{id}?deleteFiles=true&addImportListExclusion=false.
+// Only called once Sonarr reports no episode files left, so the folder holds
+// nothing but leftovers; the exclusion stays off so an import list can add the
+// show again if it returns.
+func (a *arrClient) deleteSeries(id int) error {
+	url := fmt.Sprintf("%s/api/v3/series/%d?deleteFiles=true&addImportListExclusion=false", a.sonarrURL, id)
+	return a.doDelete("sonarr", url, a.sonarrAPIKey, fmt.Sprint(id))
+}
+
 // send issues a Radarr/Sonarr request with a JSON body, treating any
 // non-2xx status as an error.
 func (a *arrClient) send(method, url, apiKey string, body any) error {

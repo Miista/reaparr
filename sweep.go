@@ -58,6 +58,9 @@ type sweeper struct {
 	// daemonEnabled gates only the scheduled sweep (see liveSweeper.sweep);
 	// the preview and the dashboard's delete buttons work either way.
 	daemonEnabled bool
+	// removeEndedSeries also deletes an ended series from Sonarr once a
+	// season delete leaves it with no episode files at all.
+	removeEndedSeries bool
 	// keepTag is the Radarr/Sonarr tag marking keepers (see keep.go).
 	keepTag string
 	// jellyfinUsers restricts whose played state counts (usernames or IDs,
@@ -346,7 +349,39 @@ func (s *sweeper) deleteDueItem(d dueItem) error {
 	if d.kind == kindMovie {
 		s.clearSeerrMovie(d.movie)
 	}
+	if d.kind == kindSeason && s.removeEndedSeries {
+		s.removeSeriesIfDone(d.title, d.season.seriesID)
+	}
 	return nil
+}
+
+// removeSeriesIfDone deletes a series from Sonarr when it has ended and no
+// season, specials included, has an episode file left. It re-reads the series
+// rather than trusting what the season check saw, and does nothing on any
+// doubt: a failed read, an unreadable keep tag, a keeper, or a series that is
+// still airing. Best effort — the season delete already succeeded, so a
+// failure here is only logged and the next season delete tries again.
+func (s *sweeper) removeSeriesIfDone(title string, seriesID int) {
+	series, err := s.arr.sonarrSeriesByID(seriesID)
+	if err != nil {
+		s.log.Warn().Msg(fmt.Sprintf("could not re-read the series of '%s' from sonarr, leaving it in place: %v", title, err))
+		return
+	}
+	if !series.emptyAndEnded() {
+		return
+	}
+	keep, err := s.resolveKeepTags()
+	if err != nil {
+		s.log.Warn().Msg(fmt.Sprintf("could not read the keep tag, leaving the ended series of '%s' in place: %v", title, err))
+		return
+	}
+	if hasTag(series.Tags, keep.sonarr) {
+		return
+	}
+	s.log.Info().Msg(fmt.Sprintf("the series of '%s' has ended and has no episode files left — removing it from sonarr", title))
+	if err := s.arr.deleteSeries(seriesID); err != nil {
+		s.log.Warn().Msg(fmt.Sprintf("could not remove the series of '%s' from sonarr: %v", title, err))
+	}
 }
 
 // clearSeerrMovie deletes a just-reaped movie's Seerr media record (what
