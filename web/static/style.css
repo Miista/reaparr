@@ -165,6 +165,10 @@ h1 { margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.03em; }
 .btn-primary:hover:not(:disabled) { background: oklch(0.66 0.2 290); }
 .btn-primary:active, .btn-test:active { transform: translateY(1px); }
 .btn-ghost { background: transparent; color: var(--label); font-weight: 500; }
+a.btn { text-decoration: none; }
+/* /auth/client.js (authy) sets data-authy on <html> when the login gate is
+   on; without it, anything marked .only-with-gate stays hidden. */
+html:not([data-authy]) .only-with-gate { display: none !important; }
 .btn-test { padding: 9px 16px; }
 .btn-test:hover:not(:disabled) { background: oklch(0.55 0.2 290); border-color: oklch(0.62 0.2 290); box-shadow: 0 4px 16px oklch(0.55 0.2 290 / .4); }
 .spin { animation: spin .8s linear infinite; }
@@ -304,6 +308,8 @@ h1 { margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.03em; }
   background-repeat: no-repeat; background-position: center; background-size: 14px 14px;
   box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 2px 8px rgba(0,0,0,.5);
 }
+.kept-by { font-size: 12px; color: var(--muted); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.keep-toggle:disabled { cursor: not-allowed; }
 .keep-toggle {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
   padding: 6px 6px 6px 12px; border-radius: 999px; border: 1px solid var(--border-2); background: var(--field);
@@ -440,13 +446,14 @@ h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
   /* Bottom tab bar */
   .tabs {
     position: fixed; z-index: 40; left: 0; right: 0; bottom: 0; max-width: none; align-self: auto;
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; overflow: visible;
+    /* One equal column per tab: a user has two (no Settings), an admin three. */
+    display: flex; gap: 0; overflow: visible;
     padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); border-radius: 0;
     border: none; border-top: 1px solid var(--border);
     background: rgba(14,15,20,.92); backdrop-filter: blur(14px);
   }
   .tabs a {
-    position: relative; flex-direction: column; justify-content: center; gap: 3px; padding: 6px 4px;
+    position: relative; flex: 1; flex-direction: column; justify-content: center; gap: 3px; padding: 6px 4px;
     font-size: 11px; font-weight: 500; border-radius: 10px;
   }
   .tabs a.active { background: transparent; box-shadow: none; color: oklch(0.8 0.15 290); font-weight: 600; }

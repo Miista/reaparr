@@ -44,12 +44,39 @@ function humanSeconds(s) {
   return plural(s / 60, 'minute');
 }
 
+// MAY lists, per action, the roles that may do it. It mirrors the route table
+// in internal/api, which is what actually enforces it; the page only uses
+// this to show what a person can do. /api/me reports the roles held.
+const MAY = {
+  view: ['user', 'admin'],
+  delete: ['admin'],
+  configure: ['admin'],
+};
+
 function App() {
   return {
     tab: 'due',
     settingsTab: 'general', // 'general' | 'connections'
     services: SERVICES,
     now: Date.now(),
+
+    me: null, // { sub, name, email, roles, local } from /api/me
+
+    // can reports whether the signed-in person holds a role that may do the
+    // action (a key of MAY).
+    can(action) {
+      const roles = (this.me && this.me.roles) || [];
+      return MAY[action].some((r) => roles.includes(r));
+    },
+
+    async loadMe() {
+      try {
+        const res = await fetch('/api/me');
+        this.me = res.ok ? await res.json() : { roles: [] };
+      } catch {
+        this.me = { roles: [] };
+      }
+    },
 
     due: [],
     dueLoading: false,
@@ -97,12 +124,22 @@ function App() {
     jellyfinUsersError: '',
 
     async mounted() {
+      // Who is signed in decides which pages exist, so it comes first.
+      await this.loadMe();
       this.applyRoute(true);
       window.addEventListener('hashchange', () => this.applyRoute());
       setInterval(() => { this.now = Date.now(); }, 30000);
       document.addEventListener('keydown', (e) => this.onDialogKey(e));
-      await Promise.all([this.loadStatus(), this.loadDue(), this.loadSettings(), this.loadConnections(), this.loadLibrary(), this.loadJellyfinUsers()]);
-      this.testConfiguredConnections();
+      if (!this.can('view')) {
+        this.loaded = true;
+        return;
+      }
+      const loads = [this.loadStatus(), this.loadDue(), this.loadLibrary()];
+      // Settings and connections are an admin's; anyone else would only get
+      // a 403 for them, so they are not asked for.
+      if (this.can('configure')) loads.push(this.loadSettings(), this.loadConnections(), this.loadJellyfinUsers());
+      await Promise.all(loads);
+      if (this.can('configure')) this.testConfiguredConnections();
       // Only now — with status and connections loaded and the tests started
       // (they count as pending until done) — can problems be judged.
       this.loaded = true;
@@ -139,6 +176,9 @@ function App() {
     },
 
     get problems() {
+      // Connection tests are an admin's; for anyone else the only signal is
+      // the server's own missing-services list (see runState).
+      if (!this.can('configure')) return [];
       return this.requirements.filter((r) => r.state === 'fail' || r.state === 'missing');
     },
 
@@ -366,8 +406,12 @@ function App() {
     // bookmark or the back button lands on the same page.
 
     applyRoute(initial = false) {
+      if (!this.can('view')) {
+        this.tab = 'denied';
+        return;
+      }
       const [tab, sub] = location.hash.replace(/^#\/?/, '').split('/');
-      if (tab === 'library' || tab === 'settings') {
+      if (tab === 'library' || (tab === 'settings' && this.can('configure'))) {
         this.tab = tab;
       } else {
         this.tab = 'due';
@@ -379,9 +423,10 @@ function App() {
       if (this.tab === 'library' && !initial) this.loadLibrary();
     },
 
-    async loadLibrary() {
+    // keepError keeps the message already shown (a refused unkeep) through the re-read.
+    async loadLibrary(keepError = false) {
       this.libraryLoading = true;
-      this.libraryError = '';
+      if (!keepError) this.libraryError = '';
       try {
         const res = await fetch('/api/library');
         const data = await res.json().catch(() => ({}));
@@ -399,6 +444,9 @@ function App() {
     // unknown because Jellyfin couldn't be checked. With the daemon off
     // nothing is deleted automatically, so no confirmation is needed.
     async toggleKeep(it) {
+      // Only whoever kept a title, or an admin, may unkeep it (the server
+      // enforces it; this just doesn't offer what would be refused).
+      if (it.kept && !it.can_unkeep) return;
       if (it.kept && this.daemonEnabled && (it.watch === 'due' || !it.watch)) {
         const when = this.nextRun
           ? `in ${humanCountdown(Math.max(60, (new Date(this.nextRun) - Date.now()) / 1000))}`
@@ -437,12 +485,18 @@ function App() {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Update failed.');
+        if ((data.refused || []).length) {
+          // Some of it was someone else's to unkeep: re-read to show the truth.
+          this.libraryError = 'Only whoever kept this, or an admin, can unkeep it.';
+          await Promise.all([this.loadLibrary(true), this.loadDue()]);
+          return;
+        }
         // The backend has already updated its due list before responding.
         await this.loadDue();
       } catch (err) {
         items.forEach((it, i) => { it.kept = before[i]; });
         this.libraryError = err.message;
-        await Promise.all([this.loadLibrary(), this.loadDue()]);
+        await Promise.all([this.loadLibrary(true), this.loadDue()]);
       } finally {
         this.libraryBusy = false;
       }

@@ -279,6 +279,28 @@ func (l *liveSweeper) Library() ([]api.LibraryItem, error) {
 	return out, nil
 }
 
+// Kept implements api.Sweeper: whether each given title carries the keep
+// tag right now, reading only the services involved.
+func (l *liveSweeper) Kept(refs []api.LibraryRef) (map[api.LibraryRef]bool, error) {
+	items := make([]libraryItem, 0, len(refs))
+	for _, r := range refs {
+		svc := arrService(r.Service)
+		if svc != serviceRadarr && svc != serviceSonarr {
+			return nil, fmt.Errorf("unknown service %q", r.Service)
+		}
+		items = append(items, libraryItem{service: svc, id: r.ID})
+	}
+	state, err := l.current().keptState(items)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[api.LibraryRef]bool, len(state))
+	for it, kept := range state {
+		out[api.LibraryRef{Service: string(it.service), ID: it.id}] = kept
+	}
+	return out, nil
+}
+
 // SetKept implements api.Sweeper: keeps or unkeeps Radarr movies / Sonarr
 // series by their own IDs, and updates the due list before returning so
 // the dashboard can show the result immediately: kept items are simply

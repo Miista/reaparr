@@ -32,8 +32,10 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/Miista/reaparr/internal/api"
+	"github.com/Miista/reaparr/internal/auth"
 	"github.com/Miista/reaparr/internal/settings"
 	"github.com/Miista/reaparr/internal/store"
+	"github.com/miista/authy"
 )
 
 // addr is the dashboard's bind address. automouse uses :8765 and packrat
@@ -51,6 +53,11 @@ var staticFiles embed.FS
 // dataDir is where config.json is persisted inside the container — mount a
 // volume here to keep dashboard-entered settings across restarts.
 const dataDir = "/app/data"
+
+// sessionTTL is how long a sign-in lasts without use. A change of someone's
+// groups at the provider reaches reaparr at their next sign-in, which authy
+// forces at 4 × this (48h) at the latest, however active the session.
+const sessionTTL = 12 * time.Hour
 
 func main() {
 	st, err := store.Open(dataDir)
@@ -82,7 +89,41 @@ func main() {
 		go live.RefreshPreview()
 	}
 
-	apiServer := api.New(st, live, tester, reloadAndRefresh, logger)
+	// Login gate: a local account created on first launch, replaced by OIDC when
+	// the REAPARR_OIDC_* variables are set. All of it is configured by REAPARR_*
+	// env vars and owned by authy (state lives in /app/data/auth).
+	// REAPARR_AUTH_DISABLED=true turns it off: gate is nil and Wrap leaves the
+	// handler unchanged. Misconfigured: refuse to start rather than serve the
+	// dashboard unprotected.
+	//
+	// reaparr asks the provider for groups, which is how user and admin are
+	// told apart (see internal/auth). Sessions are shorter than
+	// authy's week because a person's groups are only read when they sign in:
+	// a change at the provider reaches reaparr at the next sign-in, so this
+	// is also how long a demotion can take.
+	gate, err := authy.FromEnv(context.Background(), "reaparr",
+		authy.WithScopes("openid", "profile", "email", "groups"),
+		authy.WithSessionTTL(sessionTTL))
+	if err != nil {
+		logger.Fatal().Err(err).Msg("invalid auth configuration")
+	}
+	roles := auth.ConfigFromEnv(gate != nil)
+	// OIDC on with no role group would make everyone the provider admits an
+	// admin: refuse, unless REAPARR_ROLES_DISABLED=true says that is intended.
+	if err := roles.Check(gate.OIDC()); err != nil {
+		logger.Fatal().Err(err).Msg("invalid role configuration")
+	}
+	switch {
+	case gate == nil:
+		logger.Warn().Msg("login is OFF (REAPARR_AUTH_DISABLED): everyone who can reach this port is an admin")
+	case !roles.Configured():
+		logger.Warn().Msg("no REAPARR_ROLE_*_GROUP is set: everyone who signs in is an admin")
+	}
+	if os.Getenv("REAPARR_ROLE_CURATOR_GROUP") != "" {
+		logger.Warn().Msg("REAPARR_ROLE_CURATOR_GROUP is no longer used: there is no curator role; deleting by hand is for admins")
+	}
+
+	apiServer := api.New(st, live, tester, reloadAndRefresh, auth.New(roles), logger)
 	mux := http.NewServeMux()
 	apiServer.Routes(mux)
 	static, err := fs.Sub(staticFiles, "web/static")
@@ -93,7 +134,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           gate.Wrap(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

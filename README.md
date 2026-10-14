@@ -231,13 +231,92 @@ Reaparr serves a small web dashboard on **port 8767** with three tabs:
 A settings/connections change made in the dashboard takes effect on the
 very next sweep — no restart required.
 
-**No authentication.** The dashboard has no login and is not meant to be
-exposed outside your LAN — anyone who can reach port 8767 can view API keys
-(masked) and trigger deletions. This matches the trust model this project
-is typically deployed alongside (e.g. Maintainerr, qBittorrent's WebUI) but
-is a real, known gap for a tool that can delete media; adding auth is a
-planned follow-up, not yet implemented. Keep this port off any
-internet-facing reverse proxy until it is.
+### Login
+
+The dashboard is protected by a login, provided by
+[authy](https://github.com/Miista/authy). It is **on by default**, with no
+configuration at all: the first time you open the dashboard you create a local
+account (username and password) on `/auth/setup`, and every later visit signs
+in on `/auth/local`. A **Sign out** card appears at the bottom of
+Settings → General.
+
+The account (a bcrypt hash in `local.json`, never the password) and the key
+that signs sessions (`auth.json`) live in `/app/data/auth/`, in the same volume
+as `config.json`. The directory must be writable by the container's user.
+**Whoever opens the dashboard first creates the account**, so open it yourself
+before exposing it. To reset a forgotten password, stop the container, delete
+both `/app/data/auth/local.json` and `/app/data/auth/auth.json`, and start it
+again; the setup page returns. (Deleting only `local.json` would leave sessions
+from the old account valid until they expire.)
+
+**Using forward auth instead?** Set `REAPARR_AUTH_DISABLED=true` to turn the
+login off. The dashboard is then unprotected by reaparr itself, so keep it
+behind your proxy's auth.
+
+#### Roles (optional, OIDC only)
+
+With OIDC, who may do what can follow groups at the identity provider. Two
+variables name a group each. A person holds every role whose group they are
+in, and each action lists the roles it accepts, any one of which is enough.
+Every list includes admin, so an admin may do everything a user may:
+
+| Action | Roles that may | Role comes from |
+|---|---|---|
+| see what is due and the library, keep a title | user, admin | `REAPARR_ROLE_USER_GROUP` → user |
+| unkeep a title | whoever kept it, or admin | see "Who may unkeep" below |
+| delete due titles by hand | admin | `REAPARR_ROLE_ADMIN_GROUP` → admin |
+| change settings and connections | admin | `REAPARR_ROLE_ADMIN_GROUP` → admin |
+
+With OIDC on and neither set, reaparr **refuses to start**, since everyone the
+provider admits would be an admin; set `REAPARR_ROLES_DISABLED=true` to allow
+that on purpose. (The local account and `REAPARR_AUTH_DISABLED` have no groups
+and are not affected.) With either set, someone in neither group is signed in
+but sees only a "no access" page. `REAPARR_ROLE_USER_GROUP` may be left empty to
+make anyone the provider lets in a user. The local account, when enabled,
+holds every role. The scheduled sweep is not affected by roles.
+
+**Who may unkeep.** Reaparr records who kept a title (in its own
+`config.json`, next to the keep tag in Radarr/Sonarr). Only that person or an
+admin can unkeep it, so a user can take back their own keep without asking
+anyone. A title kept before this was recorded, or by hand in Radarr/Sonarr,
+has no owner and only an admin can unkeep it. Only admins see who kept what.
+
+Every route checks the roles on the server, so the page hiding a button is a
+courtesy, not the control. A person's groups are read when they sign in. A
+session ends after 12 hours without use, and in any case 48 hours after
+signing in, so a change at the provider can take up to 48 hours to reach
+reaparr.
+
+An admin is a trusted operator: they can change connections and use **Test
+connection** to make reaparr request a URL of their choice from inside your
+network.
+
+#### OpenID Connect (optional)
+
+To sign in through an identity provider (Authelia, Authentik, Keycloak,
+Entra ID, …) instead, set all four of these. OIDC is on as soon as they are
+there; there is no separate switch:
+
+| Variable | |
+|---|---|
+| `REAPARR_OIDC_ISSUER` | provider URL, e.g. `https://auth.example.com` |
+| `REAPARR_OIDC_CLIENT_ID` / `REAPARR_OIDC_CLIENT_SECRET` | the client registered at the provider |
+| `REAPARR_OIDC_BASE_URL` | reaparr's external URL, e.g. `https://reaparr.example.com` |
+| `REAPARR_LOCAL_ENABLED` | optional; `true` keeps the local account next to OIDC as an escape hatch (see below) |
+
+Register `<BASE_URL>/auth/callback` as the client's redirect URI (the exact
+value is logged at startup). Who may sign in is decided at the provider.
+
+With OIDC configured, a page load goes straight to the provider and the local
+account is switched off: **setup is closed**, so nobody can claim the dashboard
+by being first. If the provider doesn't approve a login, or can't be reached,
+you get a page with a retry button, never a redirect loop. With
+`REAPARR_LOCAL_ENABLED=true` that page also offers the local account, the way
+in when the provider is down; setup is then open until the account exists, so
+create it right away. Only some of the OIDC settings, or none with
+`REAPARR_LOCAL_ENABLED=false`, makes reaparr refuse to start; an unreachable
+provider does not (it retries in the background). See the authy README for the
+full flow.
 
 ## Deployment
 
