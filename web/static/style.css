@@ -233,6 +233,7 @@ html:not([data-authy]) .only-with-gate { display: none !important; }
 .when-blocked { color: var(--amber-text); }
 
 
+.when-prefix { display: none; }
 /* Due table on mobile: no select column or "stopped playing"; buttons drop under the row. */
 @media (max-width: 640px) {
   .table { min-width: 0; }
@@ -243,6 +244,7 @@ html:not([data-authy]) .only-with-gate { display: none !important; }
     grid-template-areas: "poster title" "poster when" "poster actions";
   }
   .row > .check, .col-stopped { display: none; }
+  .when-prefix { display: inline; }
   .cell-title { display: contents; }
   .row .poster { grid-area: poster; width: 96px; height: 144px; font-size: 28px; border-radius: 10px; }
   .row .cell-title .cell-stack { grid-area: title; }

@@ -112,7 +112,7 @@
               <span class="mono-sub">{{ formatDateTime(item.stopped_at) }}</span>
             </div>
             <div class="cell-stack">
-              <span class="primary-line" :class="deletionWhen(item).cls">{{ deletionWhen(item).main }}</span>
+              <span class="primary-line" :class="deletionWhen(item).cls"><span class="when-prefix" v-if="item.resolved && !deletionWhen(item).cls.includes('when-off')">Will be deleted in </span>{{ deletionWhen(item).main }}</span>
               <span class="sub">{{ deletionWhen(item).sub }}</span>
             </div>
             <div class="row-actions">
