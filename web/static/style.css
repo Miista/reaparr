@@ -233,6 +233,19 @@ html:not([data-authy]) .only-with-gate { display: none !important; }
 .when-blocked { color: var(--amber-text); }
 
 
+/* Due table on mobile: no select column or "stopped playing"; buttons drop under the row. */
+@media (max-width: 640px) {
+  .table { min-width: 0; }
+  .row { grid-template-columns: minmax(0,1fr) auto; gap: 12px 16px; align-items: start; }
+  .row > .check, .col-stopped { display: none; }
+  .row.head { align-items: center; }
+  .row.head .col-actions { display: none; }
+  .row .cell-stack:not(.col-stopped) { text-align: right; }
+  .row .cell-title .cell-stack { text-align: left; }
+  .row .row-actions { grid-column: 1 / -1; justify-self: stretch; justify-content: space-between; }
+  .row .row-actions button { flex: 1; }
+}
+
 .btn-row-delete {
   justify-self: end; padding: 8px 14px; border-radius: 9px; border: 1px solid oklch(0.5 0.14 25 / .5);
   background: oklch(0.3 0.08 25 / .35); color: oklch(0.8 0.13 25);

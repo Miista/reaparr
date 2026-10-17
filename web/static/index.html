@@ -97,7 +97,7 @@
 
       <div class="card table-card" v-if="due.length">
         <div class="table">
-          <div class="row head"><button type="button" class="check" :class="{ on: allSelected, partial: someSelected && !allSelected }" @click="toggleAll" :disabled="!resolvedCount" aria-label="Select all"><svg v-if="allSelected" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#fff" stroke-width="2"><path d="M2.5 6.2l2.3 2.3 4.7-5"></path></svg></button><span>Title</span><span>Stopped playing</span><span>Will be deleted in</span><span></span></div>
+          <div class="row head"><button type="button" class="check" :class="{ on: allSelected, partial: someSelected && !allSelected }" @click="toggleAll" :disabled="!resolvedCount" aria-label="Select all"><svg v-if="allSelected" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#fff" stroke-width="2"><path d="M2.5 6.2l2.3 2.3 4.7-5"></path></svg></button><span>Title</span><span class="col-stopped">Stopped playing</span><span>Will be deleted in</span><span class="col-actions"></span></div>
           <div class="row" v-for="item in due" :key="item.id" :class="{ selected: isSelected(item) }">
             <button type="button" class="check" :class="{ on: isSelected(item) }" @click="toggleSelect(item)" :disabled="!item.resolved" :aria-label="'Select ' + item.title"><svg v-if="isSelected(item)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#fff" stroke-width="2"><path d="M2.5 6.2l2.3 2.3 4.7-5"></path></svg></button>
             <div class="cell-title">
@@ -107,7 +107,7 @@
                 <span class="kind" :class="item.kind">{{ item.kind }}</span>
               </div>
             </div>
-            <div class="cell-stack">
+            <div class="cell-stack col-stopped">
               <span class="primary-line">{{ ago(item.stopped_at) }}</span>
               <span class="mono-sub">{{ formatDateTime(item.stopped_at) }}</span>
             </div>
