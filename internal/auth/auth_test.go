@@ -54,6 +54,17 @@ func TestRoles(t *testing.T) {
 	}
 }
 
+// The person is shown by their name, not their login handle: it feeds /api/me
+// and the "Kept by" record.
+func TestPrincipalNameIsTheDisplayName(t *testing.T) {
+	a := New(Config{GateOn: true})
+	a.from = withUser(authy.User{Subject: "s", Username: "soren", DisplayName: "Søren"}, true)
+	p, ok := a.Principal(httptest.NewRequest(http.MethodGet, "/", nil))
+	if !ok || p.Name != "Søren" {
+		t.Errorf("name = %q (ok %v), want the display name", p.Name, ok)
+	}
+}
+
 func TestCheck(t *testing.T) {
 	tests := []struct {
 		name     string

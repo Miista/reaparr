@@ -1,9 +1,9 @@
 module github.com/Miista/reaparr
 
-go 1.26.5
+go 1.26.10
 
 require (
-	github.com/miista/authy v0.1.2
+	github.com/miista/authy v0.1.3
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/zerolog v1.35.1
 )

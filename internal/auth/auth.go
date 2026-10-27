@@ -122,7 +122,7 @@ func (a *Auth) Principal(r *http.Request) (Principal, bool) {
 	if !ok || u.Subject == "" {
 		return Principal{}, false
 	}
-	return Principal{Sub: u.Subject, Name: u.Name, Email: u.Email, Local: isLocal(u), Roles: a.rolesFor(u)}, true
+	return Principal{Sub: u.Subject, Name: u.DisplayName, Email: u.Email, Local: isLocal(u), Roles: a.rolesFor(u)}, true
 }
 
 // isLocal reports whether the person signed in with the local account. authy
