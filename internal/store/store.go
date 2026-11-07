@@ -1,23 +1,16 @@
-// Package store persists reaparr's user-configurable settings, connections
-// and keeper records to a SQLite database under a data directory. State is
-// held in memory and every Update writes the whole of it back in one
-// transaction; the file is 0600 since it holds API keys.
-//
-// Earlier versions kept the same state in dataDir/config.json. The first
-// Open against a database with no state yet imports that file, then renames
-// it to config.json.migrated so it's kept but never read again.
+// Package store persists reaparr's user-configurable settings and
+// connections to a single JSON file under a data directory, mirroring
+// automouse's internal/store package in this same stack. All writes go
+// through Update, which rewrites the whole file atomically
+// (temp-file-then-rename) with 0600 permissions since it holds API keys.
 package store
 
 import (
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
-
-	_ "modernc.org/sqlite" // pure Go, so the binary still builds with CGO_ENABLED=0
 )
 
 // Settings holds the user-configurable tunables that aren't connection
@@ -85,16 +78,6 @@ func DefaultConnections() Connections {
 	}
 }
 
-// byService names each connection as it's stored in the connections table.
-func (c *Connections) byService() map[string]*Connection {
-	return map[string]*Connection{
-		"jellyfin": &c.Jellyfin,
-		"radarr":   &c.Radarr,
-		"sonarr":   &c.Sonarr,
-		"seerr":    &c.Seerr,
-	}
-}
-
 // Keeper is who put a keep tag on a title through the dashboard. The tag
 // itself lives in Radarr/Sonarr and is all the sweep looks at; this only says
 // who may take it off again (see internal/api).
@@ -103,7 +86,7 @@ type Keeper struct {
 	Name string `json:"name"` // for display to admins; never used to decide anything
 }
 
-// State is the full persisted state.
+// State is the full persisted document.
 type State struct {
 	Settings    Settings    `json:"settings"`
 	Connections Connections `json:"connections"`
@@ -113,209 +96,49 @@ type State struct {
 	Keepers map[string]Keeper `json:"keepers,omitempty"`
 }
 
-const (
-	dbFile     = "reaparr.db"
-	legacyFile = "config.json"
-)
-
-// migrations[i] takes the schema from version i to i+1 (PRAGMA
-// user_version). Append only: a released step is never edited.
-var migrations = []string{
-	`CREATE TABLE settings (
-		id                  INTEGER PRIMARY KEY CHECK (id = 1),
-		log_level           TEXT    NOT NULL,
-		poll_schedule       TEXT    NOT NULL,
-		movies_grace_period TEXT    NOT NULL,
-		tv_grace_period     TEXT    NOT NULL,
-		daemon_enabled      INTEGER NOT NULL,
-		remove_ended_series INTEGER NOT NULL,
-		keep_tag            TEXT    NOT NULL,
-		jellyfin_users      TEXT    NOT NULL
-	);
-	CREATE TABLE connections (
-		service TEXT PRIMARY KEY,
-		url     TEXT NOT NULL,
-		api_key TEXT NOT NULL
-	);
-	CREATE TABLE keepers (
-		ref  TEXT PRIMARY KEY,
-		sub  TEXT NOT NULL,
-		name TEXT NOT NULL
-	);`,
-}
-
-// Store guards State with a mutex and persists it to dataDir/reaparr.db.
+// Store guards State with a mutex and persists it to dataDir/config.json.
 type Store struct {
 	mu      sync.RWMutex
-	db      *sql.DB
+	path    string
 	dataDir string
 	state   State
 }
 
-// Open loads state from dataDir/reaparr.db, creating the directory and the
-// database if they don't exist yet. A database with no state in it is filled
-// from dataDir/config.json if there is one, else with defaults.
+// Open loads state from dataDir/config.json, creating the directory and a
+// fresh default document if none exists yet.
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("creating data dir: %w", err)
 	}
-	path := filepath.Join(dataDir, dbFile)
-	// Create the file ourselves so it's 0600 from the start; SQLite gives
-	// its -wal and -shm files the same mode.
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("creating database file: %w", err)
+	s := &Store{
+		path:    filepath.Join(dataDir, "config.json"),
+		dataDir: dataDir,
+		state: State{
+			Settings:    DefaultSettings(),
+			Connections: DefaultConnections(),
+		},
 	}
-	f.Close()
-
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
-	if err != nil {
-		return nil, fmt.Errorf("opening database: %w", err)
-	}
-	// One connection: writes are rare and small, and it rules out
-	// SQLITE_BUSY between this process's own connections.
-	db.SetMaxOpenConns(1)
-
-	s := &Store{db: db, dataDir: dataDir}
-	if err := s.init(); err != nil {
-		db.Close()
-		return nil, err
+	if _, err := os.Stat(s.path); err == nil {
+		raw, err := os.ReadFile(s.path)
+		if err != nil {
+			return nil, fmt.Errorf("reading state file: %w", err)
+		}
+		if err := json.Unmarshal(raw, &s.state); err != nil {
+			return nil, fmt.Errorf("parsing state file: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("stat state file: %w", err)
+	} else {
+		if err := s.saveLocked(); err != nil {
+			return nil, err
+		}
 	}
 	return s, nil
-}
-
-func (s *Store) init() error {
-	if err := migrate(s.db); err != nil {
-		return err
-	}
-	found, err := s.load()
-	if err != nil {
-		return err
-	}
-	if found {
-		return nil
-	}
-	s.state = State{Settings: DefaultSettings(), Connections: DefaultConnections()}
-	legacy := filepath.Join(s.dataDir, legacyFile)
-	raw, err := os.ReadFile(legacy)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return s.saveLocked()
-	case err != nil:
-		return fmt.Errorf("reading %s: %w", legacyFile, err)
-	}
-	// Unmarshal over the defaults, as the JSON store always did, so a field
-	// missing from an older file keeps its default.
-	if err := json.Unmarshal(raw, &s.state); err != nil {
-		return fmt.Errorf("parsing %s: %w", legacyFile, err)
-	}
-	if err := s.saveLocked(); err != nil {
-		return err
-	}
-	// Only once the import is committed: a failure before this leaves the
-	// database without state, so the next start imports again.
-	if err := os.Rename(legacy, legacy+".migrated"); err != nil {
-		return fmt.Errorf("renaming %s after importing it: %w", legacyFile, err)
-	}
-	return nil
-}
-
-func migrate(db *sql.DB) error {
-	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
-		return fmt.Errorf("reading schema version: %w", err)
-	}
-	if version > len(migrations) {
-		return fmt.Errorf("database schema version %d is newer than this reaparr understands (%d)", version, len(migrations))
-	}
-	for v := version; v < len(migrations); v++ {
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(migrations[v]); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("migrating schema to version %d: %w", v+1, err)
-		}
-		// PRAGMA takes no bound parameters.
-		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, v+1)); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("migrating schema to version %d: %w", v+1, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("migrating schema to version %d: %w", v+1, err)
-		}
-	}
-	return nil
-}
-
-// load reads state from the database into s.state. found=false means the
-// database holds no state yet.
-func (s *Store) load() (found bool, err error) {
-	st := State{Connections: DefaultConnections()}
-	err = s.db.QueryRow(`SELECT log_level, poll_schedule, movies_grace_period, tv_grace_period,
-		daemon_enabled, remove_ended_series, keep_tag, jellyfin_users FROM settings WHERE id = 1`).Scan(
-		&st.Settings.LogLevel, &st.Settings.PollSchedule, &st.Settings.MoviesGracePeriod, &st.Settings.TVGracePeriod,
-		&st.Settings.DaemonEnabled, &st.Settings.RemoveEndedSeries, &st.Settings.KeepTag, &st.Settings.JellyfinUsers)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("reading settings: %w", err)
-	}
-
-	rows, err := s.db.Query(`SELECT service, url, api_key FROM connections`)
-	if err != nil {
-		return false, fmt.Errorf("reading connections: %w", err)
-	}
-	defer rows.Close()
-	conns := st.Connections.byService()
-	for rows.Next() {
-		var service string
-		var c Connection
-		if err := rows.Scan(&service, &c.URL, &c.APIKey); err != nil {
-			return false, fmt.Errorf("reading connections: %w", err)
-		}
-		if dst, ok := conns[service]; ok {
-			*dst = c
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("reading connections: %w", err)
-	}
-
-	krows, err := s.db.Query(`SELECT ref, sub, name FROM keepers`)
-	if err != nil {
-		return false, fmt.Errorf("reading keepers: %w", err)
-	}
-	defer krows.Close()
-	for krows.Next() {
-		var ref string
-		var k Keeper
-		if err := krows.Scan(&ref, &k.Sub, &k.Name); err != nil {
-			return false, fmt.Errorf("reading keepers: %w", err)
-		}
-		if st.Keepers == nil {
-			st.Keepers = map[string]Keeper{}
-		}
-		st.Keepers[ref] = k
-	}
-	if err := krows.Err(); err != nil {
-		return false, fmt.Errorf("reading keepers: %w", err)
-	}
-
-	s.state = st
-	return true, nil
 }
 
 // DataDir returns the directory state is persisted under.
 func (s *Store) DataDir() string {
 	return s.dataDir
-}
-
-// Close closes the database.
-func (s *Store) Close() error {
-	return s.db.Close()
 }
 
 // View runs fn with a read lock held over a copy of the current state.
@@ -334,39 +157,18 @@ func (s *Store) Update(fn func(*State)) error {
 	return s.saveLocked()
 }
 
-// saveLocked writes the whole state to the database in one transaction.
-// Caller must hold s.mu.
+// saveLocked writes state to disk. Caller must hold s.mu.
 func (s *Store) saveLocked() error {
-	tx, err := s.db.Begin()
+	raw, err := json.MarshalIndent(s.state, "", "  ")
 	if err != nil {
-		return fmt.Errorf("saving state: %w", err)
+		return fmt.Errorf("marshaling state: %w", err)
 	}
-	defer tx.Rollback() // a no-op once committed
-
-	st := s.state.Settings
-	if _, err := tx.Exec(`INSERT OR REPLACE INTO settings (id, log_level, poll_schedule, movies_grace_period,
-		tv_grace_period, daemon_enabled, remove_ended_series, keep_tag, jellyfin_users)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		st.LogLevel, st.PollSchedule, st.MoviesGracePeriod, st.TVGracePeriod,
-		st.DaemonEnabled, st.RemoveEndedSeries, st.KeepTag, st.JellyfinUsers); err != nil {
-		return fmt.Errorf("saving settings: %w", err)
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return fmt.Errorf("writing state file: %w", err)
 	}
-	for service, c := range s.state.Connections.byService() {
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO connections (service, url, api_key) VALUES (?, ?, ?)`,
-			service, c.URL, c.APIKey); err != nil {
-			return fmt.Errorf("saving connections: %w", err)
-		}
-	}
-	if _, err := tx.Exec(`DELETE FROM keepers`); err != nil {
-		return fmt.Errorf("saving keepers: %w", err)
-	}
-	for ref, k := range s.state.Keepers {
-		if _, err := tx.Exec(`INSERT INTO keepers (ref, sub, name) VALUES (?, ?, ?)`, ref, k.Sub, k.Name); err != nil {
-			return fmt.Errorf("saving keepers: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("saving state: %w", err)
+	if err := os.Rename(tmp, s.path); err != nil {
+		return fmt.Errorf("renaming state file: %w", err)
 	}
 	return nil
 }
