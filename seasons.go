@@ -131,7 +131,7 @@ func (l *sonarrLookups) seasonEpisodes(seriesID, season int) ([]sonarrEpisode, e
 // grace period has due=false. A row that can't be acted on carries
 // resolved=false and a reason (unsafe hardlinks, a lookup failure, or
 // untracked in Sonarr).
-func (s *sweeper) evaluateSeason(g *seasonGroup, now time.Time, safety hardlinkSafety, lookups *sonarrLookups, keep keepTagIDs) (dueItem, bool) {
+func (s *sweeper) evaluateSeason(g *seasonGroup, now time.Time, safety hardlinkSafety, lookups *sonarrLookups, keep keepTagIDs, unkept map[string]time.Time) (dueItem, bool) {
 	title := fmt.Sprintf("%s — Season %d", g.seriesName, g.season)
 
 	if !s.arr.hasSonarr() {
@@ -148,6 +148,7 @@ func (s *sweeper) evaluateSeason(g *seasonGroup, now time.Time, safety hardlinkS
 		kind:        kindSeason,
 		gracePeriod: s.tvGracePeriod,
 		stoppedAt:   g.stoppedAt,
+		graceFrom:   g.stoppedAt,
 		due:         g.stoppedAt.Before(now.Add(-s.tvGracePeriod)),
 	}
 	unresolved := func(reason string) (dueItem, bool) {
@@ -179,6 +180,10 @@ func (s *sweeper) evaluateSeason(g *seasonGroup, now time.Time, safety hardlinkS
 		s.log.Debug().Msg(fmt.Sprintf("'%s' is marked as a keeper, skipping", title))
 		return dueItem{}, false
 	}
+	// Unkeeping applies to the whole series, so every season's grace period
+	// starts no earlier than that.
+	d.graceFrom = laterUnkeep(d.graceFrom, unkept, serviceSonarr, series.ID)
+	d.due = d.graceFrom.Before(now.Add(-s.tvGracePeriod))
 	episodes, err := lookups.seasonEpisodes(series.ID, g.season)
 	if err != nil {
 		return unresolved(fmt.Sprintf("Sonarr episode lookup failed: %v", err))
@@ -209,9 +214,9 @@ func (s *sweeper) evaluateSeason(g *seasonGroup, now time.Time, safety hardlinkS
 	}
 
 	if d.due {
-		s.log.Info().Msg(fmt.Sprintf("'%s' is fully watched and past its %s grace period (last stopped playing %s)", title, s.tvGracePeriod, g.stoppedAt.Local().Format("2006-01-02 15:04")))
+		s.log.Info().Msg(fmt.Sprintf("'%s' is fully watched and past its %s grace period (%s)", title, s.tvGracePeriod, graceSince(d)))
 	} else {
-		s.log.Debug().Msg(fmt.Sprintf("'%s' is fully watched, last stopped playing %s, still within its %s grace period", title, g.stoppedAt.Local().Format("2006-01-02 15:04"), s.tvGracePeriod))
+		s.log.Debug().Msg(fmt.Sprintf("'%s' is fully watched, %s, still within its %s grace period", title, graceSince(d), s.tvGracePeriod))
 	}
 	d.resolved = true
 	d.season = target

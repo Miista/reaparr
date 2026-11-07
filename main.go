@@ -277,6 +277,7 @@ func buildSweeper(st *store.Store, httpClient *http.Client, logger zerolog.Logge
 		removeEndedSeries: cfg.RemoveEndedSeries,
 		keepTag:           keepTag,
 		jellyfinUsers:     parseUserList(cfg.JellyfinUsers),
+		unkept:            st,
 		log:               withComponent(logger, "sweep"),
 	}
 }

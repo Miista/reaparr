@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func open(t *testing.T, dir string) *Store {
@@ -199,6 +200,76 @@ func TestBrokenLegacyJSONFailsAndIsRetried(t *testing.T) {
 	writeLegacy(t, dir, `{"settings": {"poll_schedule": "@daily"}}`)
 	if got := state(open(t, dir)).Settings.PollSchedule; got != "@daily" {
 		t.Errorf("poll schedule = %q, want @daily from the fixed config.json", got)
+	}
+}
+
+func TestUnkeptTimesSurviveReopen(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	first := time.Date(2026, 1, 2, 3, 4, 5, 6, time.UTC)
+	if err := s.RecordUnkept([]string{"radarr:1", "sonarr:2"}, first); err != nil {
+		t.Fatal(err)
+	}
+	later := first.Add(time.Hour)
+	if err := s.RecordUnkept([]string{"radarr:1"}, later); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := open(t, dir).UnkeptTimes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]time.Time{"radarr:1": later, "sonarr:2": first}
+	if len(got) != len(want) {
+		t.Fatalf("unkeep times = %v, want %v", got, want)
+	}
+	for ref, w := range want {
+		if !got[ref].Equal(w) {
+			t.Errorf("%s unkept at %v, want %v", ref, got[ref], w)
+		}
+	}
+}
+
+func TestNoUnkeptTimesOnAFreshStore(t *testing.T) {
+	got, err := open(t, t.TempDir()).UnkeptTimes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("unkeep times = %v, want none", got)
+	}
+}
+
+// A v1.4.0 database (schema version 1) is upgraded in place: what it held
+// is still there, and unkeep times can be recorded.
+func TestUpgradesAVersion1Database(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	if err := s.Update(func(st *State) {
+		st.Settings.PollSchedule = "@daily"
+		st.Keepers = map[string]Keeper{"radarr:1": {Sub: "sub-alice", Name: "Alice"}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DROP TABLE unkept; PRAGMA user_version = 1`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s = open(t, dir)
+	st := state(s)
+	if st.Settings.PollSchedule != "@daily" || st.Keepers["radarr:1"].Sub != "sub-alice" {
+		t.Fatalf("state after upgrade = %+v, want the version 1 data kept", st)
+	}
+	if err := s.RecordUnkept([]string{"radarr:1"}, time.Now()); err != nil {
+		t.Fatalf("recording an unkeep after the upgrade: %v", err)
+	}
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != len(migrations) {
+		t.Errorf("schema version = %d, want %d", version, len(migrations))
 	}
 }
 
