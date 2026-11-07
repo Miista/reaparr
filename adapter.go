@@ -119,7 +119,7 @@ func renderDue(due []dueItem) []api.DueItem {
 			Kind:        string(d.kind),
 			GracePeriod: d.gracePeriod.String(),
 			StoppedAt:   d.stoppedAt.Format(time.RFC3339),
-			DueAt:       d.graceFrom.Add(d.gracePeriod).Format(time.RFC3339),
+			DueAt:       d.stoppedAt.Add(d.gracePeriod).Format(time.RFC3339),
 			Due:         d.due,
 			Resolved:    d.resolved,
 			Reason:      d.reason,
@@ -274,7 +274,7 @@ func (l *liveSweeper) Library() ([]api.LibraryItem, error) {
 		if it.service == serviceSonarr {
 			kind = "series"
 		}
-		out = append(out, api.LibraryItem{Service: string(it.service), ID: it.id, Title: it.title, Year: it.year, Kind: kind, Kept: it.kept})
+		out = append(out, api.LibraryItem{Service: string(it.service), ID: it.id, Title: it.title, Year: it.year, Kind: kind, Kept: it.kept, Watch: it.watch})
 	}
 	return out, nil
 }

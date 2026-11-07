@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/rs/zerolog"
 
@@ -21,7 +20,6 @@ type fakeLibrary struct {
 	items   []LibraryItem
 	calls   []setKeptCall
 	failSet bool
-	onSet   func() // called by every successful SetKept, if set
 }
 
 type setKeptCall struct {
@@ -58,9 +56,6 @@ func (f *fakeLibrary) SetKept(refs []LibraryRef, keep bool) error {
 				f.items[i].Kept = keep
 			}
 		}
-	}
-	if f.onSet != nil {
-		f.onSet()
 	}
 	return nil
 }
@@ -393,67 +388,12 @@ func TestUnkeepSucceedsEvenIfForgettingTheOwnerFails(t *testing.T) {
 	e := newKeepEnv(t, movie(1, false))
 	e.as_(alice)
 	e.keep(true, ref(1))
-	// Break the store once the tag is off: the unkeep time is recorded by
-	// then, only forgetting the owner fails.
-	e.lib.onSet = e.breakStore
+	e.breakStore()
 	if code, _ := e.keep(false, ref(1)); code != http.StatusOK {
 		t.Fatalf("unkeep: %d, want 200: the tag is gone, which is what was asked", code)
 	}
 	if e.lib.items[0].Kept {
 		t.Fatal("the title is still kept")
-	}
-}
-
-// Without its unkeep time the sweep would count the grace period from the
-// last watch, possibly long ago, and delete the title at the next run — so
-// a time that can't be recorded leaves the title kept.
-func TestUnkeepWhoseTimeCannotBeRecordedIsNotUnkept(t *testing.T) {
-	e := newKeepEnv(t, movie(1, false))
-	e.as_(alice)
-	e.keep(true, ref(1))
-	e.breakStore()
-	if code, _ := e.keep(false, ref(1)); code != http.StatusInternalServerError {
-		t.Fatalf("unkeep with a failing store: %d, want 500", code)
-	}
-	if !e.lib.items[0].Kept || len(e.lib.calls) != 1 {
-		t.Fatalf("the tag was removed without an unkeep time: calls %+v", e.lib.calls)
-	}
-}
-
-func TestUnkeepRecordsWhen(t *testing.T) {
-	e := newKeepEnv(t, movie(1, false), movie(2, false))
-	e.as_(alice)
-	e.keep(true, ref(1))
-	e.keep(true, ref(2))
-
-	before := time.Now()
-	if code, _ := e.keep(false, ref(1)); code != http.StatusOK {
-		t.Fatalf("unkeep: %d, want 200", code)
-	}
-	times, err := e.st.UnkeptTimes()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if at, ok := times["radarr:1"]; !ok || at.Before(before) || at.After(time.Now()) {
-		t.Errorf("unkeep time of radarr:1 = %v (recorded: %v), want the moment it was unkept", at, ok)
-	}
-	if _, ok := times["radarr:2"]; ok {
-		t.Error("radarr:2 has an unkeep time but was never unkept")
-	}
-}
-
-// Unkeeping something that isn't kept unkeeps nothing, so it must not give
-// the title a fresh grace period either.
-func TestUnkeepOfAnUnkeptTitleRecordsNothing(t *testing.T) {
-	e := newKeepEnv(t, movie(1, false))
-	e.as_(alice)
-	e.keep(false, ref(1))
-	times, err := e.st.UnkeptTimes()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(times) != 0 {
-		t.Errorf("unkeep times = %v, want none", times)
 	}
 }
 

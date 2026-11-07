@@ -82,6 +82,9 @@ type LibraryItem struct {
 	Year    int    `json:"year"`
 	Kind    string `json:"kind"` // "movie" or "series"
 	Kept    bool   `json:"kept"` // carries the keep tag: never deleted
+	// Watch is what unkeeping would do: "due" (would be deleted on the next
+	// scheduled run), "waiting", "unwatched", or "" if unknown.
+	Watch string `json:"watch"`
 	// CanUnkeep and KeptBy are filled in per request (see handleLibrary), not
 	// by the sweeper: whether the person asking may unkeep this kept title,
 	// and, for admins only, who kept it.
@@ -116,7 +119,7 @@ type DueItem struct {
 	Kind        string `json:"kind"` // "movie" or "season"
 	GracePeriod string `json:"grace_period"`
 	StoppedAt   string `json:"stopped_at"` // RFC3339; for a season, its latest episode stop
-	DueAt       string `json:"due_at"`     // RFC3339; grace period after stopped_at, or after the last unkeep if later
+	DueAt       string `json:"due_at"`     // RFC3339; stopped_at + grace period
 	Due         bool   `json:"due"`        // past its grace period; false => still waiting
 	Resolved    bool   `json:"resolved"`   // false => can't be deleted; Reason says why
 	Reason      string `json:"reason,omitempty"`
@@ -482,17 +485,6 @@ func (s *Server) handleLibraryKeep(w http.ResponseWriter, r *http.Request) {
 		if err := s.setKeepers(changed, store.Keeper{Sub: p.Sub, Name: p.Name}); err != nil {
 			s.log.Error().Err(err).Msg("recording who kept a title")
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "recording who kept it failed; nothing was kept"})
-			return
-		}
-	}
-	// Unkeeping records when before removing the tag: the sweep starts the
-	// title's grace period no earlier than that, so a title watched long ago
-	// isn't deleted at the very next run. A time left behind by a failed untag
-	// is harmless — the title is still kept.
-	if !req.Keep && len(changed) > 0 {
-		if err := s.store.RecordUnkept(changed, time.Now()); err != nil {
-			s.log.Error().Err(err).Msg("recording when a title was unkept")
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "recording when it was unkept failed; nothing was unkept"})
 			return
 		}
 	}

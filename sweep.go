@@ -39,12 +39,9 @@ const (
 // stops appearing in B and is never touched — there is nothing stored to
 // go stale.
 //
-// The one thing it reads that Jellyfin can't supply is when a title was last
-// unkept through the dashboard: unkeeping starts a fresh grace period (see
-// laterUnkeep), so it's stored with the settings.
-//
-// Restarting the container is a safe, complete reset: a fresh process
-// performs a fresh, fully-correct sweep immediately on startup.
+// Restarting the container is a safe, complete reset: with no persisted
+// state, a fresh process performs a fresh, fully-correct sweep immediately
+// on startup.
 type sweeper struct {
 	jellyfin *jellyfinClient
 	arr      *arrClient
@@ -69,16 +66,7 @@ type sweeper struct {
 	// jellyfinUsers restricts whose played state counts (usernames or IDs,
 	// matched case-insensitively). Empty means every user.
 	jellyfinUsers []string
-	// unkept says when titles were last unkept through the dashboard; nil
-	// means never.
-	unkept unkeptSource
-	log    zerolog.Logger
-}
-
-// unkeptSource is when each title ("radarr:123" / "sonarr:45") was last
-// unkept through the dashboard (*store.Store in production).
-type unkeptSource interface {
-	UnkeptTimes() (map[string]time.Time, error)
+	log           zerolog.Logger
 }
 
 func (s *sweeper) run(ctx context.Context) {
@@ -174,14 +162,11 @@ type dueItem struct {
 	kind        mediaKind
 	gracePeriod time.Duration
 	stoppedAt   time.Time
-	// graceFrom is when its grace period started: stoppedAt, or when it was
-	// last unkept through the dashboard if that's later (see laterUnkeep).
-	graceFrom time.Time
-	due       bool // past its grace period
-	resolved  bool
-	reason    string        // set when resolved=false
-	movie     radarrMovie   // kind=movie, resolved
-	season    *seasonTarget // kind=season, resolved
+	due         bool // past its grace period
+	resolved    bool
+	reason      string        // set when resolved=false
+	movie       radarrMovie   // kind=movie, resolved
+	season      *seasonTarget // kind=season, resolved
 }
 
 // findDue returns only what is past its grace period — what the scheduled
@@ -209,6 +194,13 @@ func (s *sweeper) findDue() ([]dueItem, error) {
 // cron sweep, the dashboard preview, and a re-verify before a manual delete
 // all go through it, never two algorithms that could silently disagree.
 func (s *sweeper) findCandidates() ([]dueItem, error) {
+	return s.collectCandidates(false)
+}
+
+// collectCandidates is findCandidates, optionally ignoring the keep tag.
+// ignoreKeep is ONLY for describing what unkeeping would do (see
+// libraryItems) — never for anything that deletes.
+func (s *sweeper) collectCandidates(ignoreKeep bool) ([]dueItem, error) {
 	safety := s.checkHardlinkSafety()
 
 	allowed, err := s.allowedUserIDs()
@@ -237,14 +229,8 @@ func (s *sweeper) findCandidates() ([]dueItem, error) {
 		s.log.Error().Msg(fmt.Sprintf("could not read the keep tag this sweep, will try again next time: %v", err))
 		return nil, err
 	}
-	// Likewise when titles were unkept: without it, a title unkept a moment
-	// ago could be deleted as if it never had a fresh grace period.
-	var unkept map[string]time.Time
-	if s.unkept != nil {
-		if unkept, err = s.unkept.UnkeptTimes(); err != nil {
-			s.log.Error().Msg(fmt.Sprintf("could not read when titles were unkept this sweep, will try again next time: %v", err))
-			return nil, err
-		}
+	if ignoreKeep {
+		keep = keepTagIDs{}
 	}
 
 	now := time.Now().UTC()
@@ -256,37 +242,19 @@ func (s *sweeper) findCandidates() ([]dueItem, error) {
 			continue
 		}
 		stoppedAt, stopped := latestStop[item.ID]
-		if d, ok := s.evaluateMovie(item, stoppedAt, stopped, now, safety, keep, unkept); ok {
+		if d, ok := s.evaluateMovie(item, stoppedAt, stopped, now, safety, keep); ok {
 			due = append(due, d)
 		}
 	}
 
 	lookups := newSonarrLookups(s)
 	for _, g := range s.groupPlayedEpisodes(playedItems, latestStop) {
-		if d, ok := s.evaluateSeason(g, now, safety, lookups, keep, unkept); ok {
+		if d, ok := s.evaluateSeason(g, now, safety, lookups, keep); ok {
 			due = append(due, d)
 		}
 	}
 
 	return due, nil
-}
-
-// laterUnkeep returns from, or when the Radarr movie / Sonarr series was
-// last unkept if that's later: unkeeping starts a fresh grace period, while
-// a watch after the unkeep counts from that watch as usual.
-func laterUnkeep(from time.Time, unkept map[string]time.Time, svc arrService, id int) time.Time {
-	if t, ok := unkept[fmt.Sprintf("%s:%d", svc, id)]; ok && t.After(from) {
-		return t
-	}
-	return from
-}
-
-// graceSince says, for the log, what an item's grace period counts from.
-func graceSince(d dueItem) string {
-	if d.graceFrom.After(d.stoppedAt) {
-		return "was unkept " + d.graceFrom.Local().Format("2006-01-02 15:04")
-	}
-	return "stopped playing " + d.stoppedAt.Local().Format("2006-01-02 15:04")
 }
 
 // findOneCandidate re-verifies, right now, whether a single movie or
@@ -321,7 +289,7 @@ func (s *sweeper) findOneCandidate(id string) (dueItem, bool, error) {
 // algorithm. ok=false means this movie isn't a candidate at all (no stop
 // event yet, or Radarr isn't configured); a movie still within its grace
 // period is a candidate with due=false.
-func (s *sweeper) evaluateMovie(item jellyfinItem, stoppedAt time.Time, stopped bool, now time.Time, safety hardlinkSafety, keep keepTagIDs, unkept map[string]time.Time) (dueItem, bool) {
+func (s *sweeper) evaluateMovie(item jellyfinItem, stoppedAt time.Time, stopped bool, now time.Time, safety hardlinkSafety, keep keepTagIDs) (dueItem, bool) {
 	if !stopped {
 		s.log.Debug().Msg(fmt.Sprintf("'%s' is played but has no stop event in jellyfin's activity log, skipping", item.Name))
 		return dueItem{}, false
@@ -333,21 +301,15 @@ func (s *sweeper) evaluateMovie(item jellyfinItem, stoppedAt time.Time, stopped 
 	}
 
 	gracePeriod := s.gracePeriodFor(item)
-	d := dueItem{id: item.ID, title: item.Name, kind: kindMovie, gracePeriod: gracePeriod, stoppedAt: stoppedAt, graceFrom: stoppedAt}
-
-	// Only a movie matched to Radarr can have been unkept, so its grace
-	// period's start is only final after the lookup.
-	movie, reason := s.resolveMovie(item, safety)
-	if reason == "" {
-		d.graceFrom = laterUnkeep(d.graceFrom, unkept, serviceRadarr, movie.ID)
-	}
-	d.due = d.graceFrom.Before(now.Add(-gracePeriod))
+	d := dueItem{id: item.ID, title: item.Name, kind: kindMovie, gracePeriod: gracePeriod, stoppedAt: stoppedAt}
+	d.due = stoppedAt.Before(now.Add(-gracePeriod))
 	if d.due {
-		s.log.Info().Msg(fmt.Sprintf("'%s' is watched and past its %s grace period (%s)", item.Name, gracePeriod, graceSince(d)))
+		s.log.Info().Msg(fmt.Sprintf("'%s' is watched and past its %s grace period (stopped playing %s)", item.Name, gracePeriod, stoppedAt.Local().Format("2006-01-02 15:04")))
 	} else {
-		s.log.Debug().Msg(fmt.Sprintf("'%s' %s, still within its %s grace period", item.Name, graceSince(d), gracePeriod))
+		s.log.Debug().Msg(fmt.Sprintf("'%s' stopped playing %s, still within its %s grace period", item.Name, stoppedAt.Local().Format("2006-01-02 15:04"), gracePeriod))
 	}
 
+	movie, reason := s.resolveMovie(item, safety)
 	if reason != "" {
 		if d.due {
 			s.log.Warn().Msg(fmt.Sprintf("'%s' can't be matched to radarr: %s", item.Name, reason))

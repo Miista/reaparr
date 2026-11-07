@@ -1,8 +1,7 @@
 // Package store persists reaparr's user-configurable settings, connections
 // and keeper records to a SQLite database under a data directory. State is
 // held in memory and every Update writes the whole of it back in one
-// transaction; the file is 0600 since it holds API keys. The database also
-// holds when each title was last unkept (see RecordUnkept).
+// transaction; the file is 0600 since it holds API keys.
 //
 // Earlier versions kept the same state in dataDir/config.json. The first
 // Open against a database with no state yet imports that file, then renames
@@ -17,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	_ "modernc.org/sqlite" // pure Go, so the binary still builds with CGO_ENABLED=0
 )
@@ -143,10 +141,6 @@ var migrations = []string{
 		ref  TEXT PRIMARY KEY,
 		sub  TEXT NOT NULL,
 		name TEXT NOT NULL
-	);`,
-	`CREATE TABLE unkept (
-		ref       TEXT PRIMARY KEY,
-		unkept_at TEXT NOT NULL
 	);`,
 }
 
@@ -338,56 +332,6 @@ func (s *Store) Update(fn func(*State)) error {
 	defer s.mu.Unlock()
 	fn(&s.state)
 	return s.saveLocked()
-}
-
-// RecordUnkept stores at as when each title in refs ("radarr:123" /
-// "sonarr:45", like the keepers) was last unkept through the dashboard,
-// replacing any earlier time. The sweep starts a title's grace period no
-// earlier than this. These live outside State: they're never edited, only
-// added to.
-func (s *Store) RecordUnkept(refs []string, at time.Time) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("saving unkeep times: %w", err)
-	}
-	defer tx.Rollback() // a no-op once committed
-
-	for _, ref := range refs {
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO unkept (ref, unkept_at) VALUES (?, ?)`,
-			ref, at.UTC().Format(time.RFC3339Nano)); err != nil {
-			return fmt.Errorf("saving unkeep time of %s: %w", ref, err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("saving unkeep times: %w", err)
-	}
-	return nil
-}
-
-// UnkeptTimes returns when each title was last unkept, keyed like the
-// keepers. A title never unkept has no entry.
-func (s *Store) UnkeptTimes() (map[string]time.Time, error) {
-	rows, err := s.db.Query(`SELECT ref, unkept_at FROM unkept`)
-	if err != nil {
-		return nil, fmt.Errorf("reading unkeep times: %w", err)
-	}
-	defer rows.Close()
-	out := map[string]time.Time{}
-	for rows.Next() {
-		var ref, at string
-		if err := rows.Scan(&ref, &at); err != nil {
-			return nil, fmt.Errorf("reading unkeep times: %w", err)
-		}
-		t, err := time.Parse(time.RFC3339Nano, at)
-		if err != nil {
-			return nil, fmt.Errorf("reading unkeep time of %s: %w", ref, err)
-		}
-		out[ref] = t
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading unkeep times: %w", err)
-	}
-	return out, nil
 }
 
 // saveLocked writes the whole state to the database in one transaction.

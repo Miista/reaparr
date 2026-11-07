@@ -439,12 +439,28 @@ function App() {
       }
     },
 
-    // One click either way: unkeeping starts a fresh grace period, so nothing
-    // is deleted the moment a title is unkept.
+    // One click either way — except unkeeping something the scheduled run
+    // would then delete: watched and past its grace period ("due"), or
+    // unknown because Jellyfin couldn't be checked. With the daemon off
+    // nothing is deleted automatically, so no confirmation is needed.
     async toggleKeep(it) {
       // Only whoever kept a title, or an admin, may unkeep it (the server
       // enforces it; this just doesn't offer what would be refused).
       if (it.kept && !it.can_unkeep) return;
+      if (it.kept && this.daemonEnabled && (it.watch === 'due' || !it.watch)) {
+        const when = this.nextRun
+          ? `in ${humanCountdown(Math.max(60, (new Date(this.nextRun) - Date.now()) / 1000))}`
+          : 'soon';
+        const ok = await this.ask({
+          title: `Unkeep ${it.title}?`,
+          message: it.watch === 'due'
+            ? `It's watched and past its grace period, so the next scheduled run (${when}) will delete it.`
+            : `Reaparr couldn't check whether it's watched. If it is and its grace period has passed, the next scheduled run (${when}) will delete it.`,
+          confirmLabel: 'Unkeep',
+          tone: 'danger',
+        });
+        if (!ok) return;
+      }
       await this.setKept([it], !it.kept);
     },
 

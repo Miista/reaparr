@@ -18,11 +18,12 @@ is remembered, and every sweep independently re-derives "what's due" from
 live Jellyfin data. Restarting the container is always a safe, complete
 reset of that matching logic.
 
-Settings and connections (see "Configuration" and "Dashboard" below) are
-what Reaparr persists, along with who kept what (see "Who may unkeep") and
-when a title was last unkept (see "Keepers"), in a small SQLite database
-under its data directory — so a value entered through the dashboard survives
-a restart. None of it is a memory of past sweeps or deletions.
+Settings and connections (see "Configuration" and "Dashboard" below) are the
+one thing Reaparr does persist (along with who kept what, see "Who may
+unkeep"), in a small SQLite database under its data directory — so a value
+entered through the dashboard survives a restart.
+This is unrelated to the sweep's statelessness: it's configuration, not a
+memory of past deletions.
 
 On a configurable cron schedule, each sweep:
 
@@ -80,16 +81,7 @@ yourself in Radarr/Sonarr:
 
 In Sonarr a tag applies to the whole series, so keeping one season keeps
 every season. If Reaparr can't read the tag from Radarr/Sonarr, it deletes
-nothing that run rather than risk deleting a keeper.
-
-**Unkeeping starts a fresh grace period.** Unkeep from the dashboard (the
-same toggle) and the title's grace period counts from the later of its last
-watch and the unkeep, so a movie watched a year ago and unkept today is
-deleted one grace period from now, not at the next run. For a series this
-applies to every season. Watching it again after the unkeep counts from that
-watch, as usual. Removing the tag directly in Radarr/Sonarr instead is not
-supported: Reaparr never sees it, so the grace period still counts from the
-last watch. The tag is unique to
+nothing that run rather than risk deleting a keeper. The tag is unique to
 Reaparr, so it doesn't change which indexers, profiles or download clients
 apply to a title.
 
@@ -181,7 +173,7 @@ setting's key upper-cased, with `.` replaced by `_`.
 | `REAPARR_SETTING_SONARR_API_KEY` | — | Sonarr API key. See the Radarr API key above |
 | `REAPARR_SETTING_SEERR_URL` | `http://seerr:5055` | Seerr base URL — see "Seerr cleanup" above |
 | `REAPARR_SETTING_SEERR_API_KEY` | — | Seerr API key. Required for sweeps to run |
-| `REAPARR_SETTING_MOVIES_GRACE_PERIOD` | `7d` | How long after the last `VideoPlaybackStopped` event (or the last unkeep, if later — see "Keepers") a still-played movie must wait before deletion (the grace period — see below) |
+| `REAPARR_SETTING_MOVIES_GRACE_PERIOD` | `7d` | How long after the last `VideoPlaybackStopped` event a still-played movie must wait before deletion (the grace period — see below) |
 | `REAPARR_SETTING_TV_GRACE_PERIOD` | `7d` | Same, for TV seasons, measured from the last stop of any episode in the season — configured independently of the movies grace period |
 | `REAPARR_SETTING_POLL_SCHEDULE` | `@hourly` | Cron expression or descriptor (`@hourly`, `@daily`, `0 */6 * * *`, ...) for how often to sweep |
 | `REAPARR_SETTING_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |

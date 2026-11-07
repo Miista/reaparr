@@ -463,8 +463,9 @@ func TestKeeper_SetKept_DedupesSeries(t *testing.T) {
 	}
 }
 
-// The library lists Sonarr series with their kept flag, and unkeeping
-// removes the tag through the series editor.
+// The library lists Sonarr series with their kept flag and what unkeeping
+// would do (here: due — the keep tag is ignored for that check), and
+// unkeeping removes the tag through the series editor.
 func TestLibrary_ListsKeptAndUnkeeps(t *testing.T) {
 	sonarr, srv := newFakeSonarr(t, season1())
 	sonarr.tags = []arrTag{{ID: 5, Label: "reaparr-keep"}}
@@ -482,6 +483,10 @@ func TestLibrary_ListsKeptAndUnkeeps(t *testing.T) {
 	if len(items) != 1 || !items[0].kept || items[0].service != serviceSonarr || items[0].id != 7 {
 		t.Fatalf("library = %+v, want series 7 kept", items)
 	}
+	if items[0].watch != "due" {
+		t.Errorf("watch = %q, want due (unkeeping would let the next run delete it)", items[0].watch)
+	}
+	// Ignoring the keep tag for the description must not leak into deletion.
 	if candidates, _ := sw.findCandidates(); len(candidates) != 0 {
 		t.Fatalf("kept series became a deletion candidate: %+v", candidates)
 	}
