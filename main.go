@@ -50,7 +50,7 @@ const addr = ":8767"
 //go:embed web/static
 var staticFiles embed.FS
 
-// dataDir is where config.json is persisted inside the container — mount a
+// dataDir is where reaparr.db is persisted inside the container — mount a
 // volume here to keep dashboard-entered settings across restarts.
 const dataDir = "/app/data"
 

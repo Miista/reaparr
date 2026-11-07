@@ -19,8 +19,9 @@ live Jellyfin data. Restarting the container is always a safe, complete
 reset of that matching logic.
 
 Settings and connections (see "Configuration" and "Dashboard" below) are the
-one thing Reaparr does persist, in a small JSON file under its data
-directory — so a value entered through the dashboard survives a restart.
+one thing Reaparr does persist (along with who kept what, see "Who may
+unkeep"), in a small SQLite database under its data directory — so a value
+entered through the dashboard survives a restart.
 This is unrelated to the sweep's statelessness: it's configuration, not a
 memory of past deletions.
 
@@ -201,7 +202,7 @@ present/absent flag or masked value is ever exposed.
 **Prefer setting API keys via environment variables.** Values from env
 vars are only ever held in memory — they are never written to disk. A key
 entered in the dashboard, by contrast, is stored in plain text in
-`config.json` (file mode `0600`). You can mix the two freely, e.g. set
+`reaparr.db` (file mode `0600`). You can mix the two freely, e.g. set
 `REAPARR_SETTING_SEERR_URL` via env and enter only the Seerr API key in the
 dashboard.
 
@@ -243,7 +244,7 @@ Settings → General.
 
 The account (a bcrypt hash in `local.json`, never the password) and the key
 that signs sessions (`auth.json`) live in `/app/data/auth/`, in the same volume
-as `config.json`. The directory must be writable by the container's user.
+as `reaparr.db`. The directory must be writable by the container's user.
 **Whoever opens the dashboard first creates the account**, so open it yourself
 before exposing it. To reset a forgotten password, stop the container, delete
 both `/app/data/auth/local.json` and `/app/data/auth/auth.json`, and start it
@@ -277,7 +278,7 @@ make anyone the provider lets in a user. The local account, when enabled,
 holds every role. The scheduled sweep is not affected by roles.
 
 **Who may unkeep.** Reaparr records who kept a title (in its own
-`config.json`, next to the keep tag in Radarr/Sonarr). Only that person or an
+`reaparr.db`, next to the keep tag in Radarr/Sonarr). Only that person or an
 admin can unkeep it, so a user can take back their own keep without asking
 anyone. A title kept before this was recorded, or by hand in Radarr/Sonarr,
 has no owner and only an admin can unkeep it. Only admins see who kept what.
@@ -323,12 +324,20 @@ full flow.
 
 Reaparr is a single static binary that both runs the scheduled sweep and
 serves the dashboard on port 8767. It persists dashboard-entered
-configuration in `/app/data/config.json` (fixed path) — mount a
+configuration in `/app/data/reaparr.db` (fixed path) — mount a
 volume there if you want settings entered via the dashboard to survive a
 container recreate (not just a restart, which the container's own
 filesystem already survives). It needs network access to Jellyfin and
 Radarr/Sonarr, and must **not** be given access to qBittorrent or its
 network.
+
+**Upgrading from a version that used `config.json`:** on its first start the
+new version imports `/app/data/config.json` into `reaparr.db` and renames it to
+`config.json.migrated`, which is kept but never read again. Going back to an
+older version afterwards means it starts from that old file: rename it back to
+`config.json`, and anything changed since the upgrade is not in it. To back up
+the database, stop the container first and copy `reaparr.db` (and any
+`reaparr.db-wal` next to it): a copy taken while it runs may be inconsistent.
 
 Pre-built images are published to
 [ghcr.io/miista/reaparr](https://github.com/Miista/reaparr/pkgs/container/reaparr)

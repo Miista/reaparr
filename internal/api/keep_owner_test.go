@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -355,11 +353,11 @@ func TestMayUnkeep(t *testing.T) {
 	}
 }
 
-// breakStore makes every later save of the store fail: the temp file it
-// writes first is a directory.
+// breakStore makes every later save of the store fail: its database is
+// closed. Reads still work, as they come from memory.
 func (e *keepEnv) breakStore() {
 	e.t.Helper()
-	if err := os.Mkdir(filepath.Join(e.dir, "config.json.tmp"), 0o700); err != nil {
+	if err := e.st.Close(); err != nil {
 		e.t.Fatal(err)
 	}
 }
