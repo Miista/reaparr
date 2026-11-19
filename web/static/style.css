@@ -273,7 +273,8 @@ html:not([data-authy]) .only-with-gate { display: none !important; }
 /* Library */
 .library-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .search-box { position: relative; flex: 1; min-width: 220px; }
-.search-box .search { font-family: inherit; font-size: 15px; padding-left: 40px; padding-right: 44px; }
+/* 16px, or iOS zooms the page in on focus. */
+.search-box .search { font-family: inherit; font-size: 16px; padding-left: 40px; padding-right: 44px; }
 .search-box .search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
 .search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--muted-2); pointer-events: none; }
 .search-clear {
