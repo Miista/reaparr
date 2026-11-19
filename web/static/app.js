@@ -956,4 +956,14 @@ function App() {
   };
 }
 
+// iOS zooms the page in when a field is focused. 16px fields stop that in
+// Safari, but not when reaparr is opened from a home-screen web app (it then
+// runs in an in-app browser). maximum-scale=1 stops it everywhere, and iOS
+// still allows pinch-zoom. Only on iOS: elsewhere it would block pinch-zoom.
+// iPadOS reports itself as a Mac, so it's told apart by its touch screen.
+if (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
+  document.querySelector('meta[name="viewport"]')
+    .setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1');
+}
+
 PetiteVue.createApp({ App }).mount('#app');
