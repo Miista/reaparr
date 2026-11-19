@@ -98,7 +98,10 @@ function App() {
       { key: 'series', label: 'Series' },
     ],
     libraryBusy: false,
-    deleteResult: '',
+
+    toast: null, // what an action just did: { id, text, title, level, undo }
+    toastAway: null, // the timer that clears a success's toast
+    toastFrom: null, // where a swipe on the toast started (clientX)
 
     missingServices: [],
     daemonEnabled: true,
@@ -267,8 +270,6 @@ function App() {
       })) return;
 
       this.deletingSelected = true;
-      this.dueError = '';
-      this.deleteResult = '';
       try {
         const res = await fetch('/api/due/delete-selected', {
           method: 'POST',
@@ -277,11 +278,14 @@ function App() {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Delete failed.');
-        this.deleteResult = `Deleted ${data.deleted}, skipped ${data.skipped}, failed ${data.failed}.`;
+        this.showToast({
+          text: `Deleted ${data.deleted}, skipped ${data.skipped}, failed ${data.failed}.`,
+          level: data.failed ? 'error' : 'ok',
+        });
         this.selected = [];
         await this.loadDue();
       } catch (err) {
-        this.dueError = err.message;
+        this.showError(err.message);
       } finally {
         this.deletingSelected = false;
       }
@@ -306,12 +310,14 @@ function App() {
     // set directly by Radarr/Sonarr ID — the same fast path as the Library.
     async keepDueRows(rows) {
       const refs = [];
+      const titles = [];
       const seen = new Set();
       for (const r of rows) {
         const key = `${r.arr_service}:${r.arr_id}`;
         if (r.resolved && r.arr_service && !seen.has(key)) {
           seen.add(key);
           refs.push({ service: r.arr_service, id: r.arr_id });
+          titles.push(r.kind === 'season' ? r.title.split(' — ')[0] : r.title);
         }
       }
       if (!refs.length) return;
@@ -319,11 +325,12 @@ function App() {
       this.due = this.due.filter((d) => !seen.has(`${d.arr_service}:${d.arr_id}`));
       this.selected = this.selected.filter((id) => this.due.some((d) => d.id === id));
       for (const it of this.library) {
-        if (seen.has(`${it.service}:${it.id}`)) it.kept = true;
+        if (seen.has(`${it.service}:${it.id}`)) {
+          it.kept = true;
+          it.can_unkeep = true;
+        }
       }
 
-      this.dueError = '';
-      this.deleteResult = '';
       try {
         const res = await fetch('/api/library/keep', {
           method: 'POST',
@@ -332,10 +339,90 @@ function App() {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Keep failed.');
+        const kept = refs.map((r, i) => ({ ...r, title: titles[i] }));
+        this.showToast({
+          text: 'Kept',
+          title: this.titlesLabel(titles),
+          undo: () => this.setKept(this.libraryItems(kept), false),
+        });
       } catch (err) {
-        this.dueError = err.message;
+        this.showError(err.message);
         await Promise.all([this.loadDue(), this.loadLibrary()]);
       }
+    },
+
+    // --- Toast ----------------------------------------------------------
+    // One toast at a time, for what an action just did. A success leaves on
+    // its own (later when it offers Undo); a failure stays until swiped away.
+
+    showToast(opts) {
+      const id = Date.now();
+      this.toast = { id, level: 'ok', ...opts };
+      clearTimeout(this.toastAway);
+      if (this.toast.level === 'error') return;
+      this.toastAway = setTimeout(() => {
+        if (this.toast?.id === id) this.toast = null;
+      }, opts.undo ? 8000 : 5000);
+    },
+
+    showError(text) {
+      this.showToast({ text, level: 'error' });
+    },
+
+    undoToast() {
+      const undo = this.toast?.undo;
+      clearTimeout(this.toastAway);
+      this.toast = null;
+      undo?.();
+    },
+
+    // titlesLabel names one title, or counts several, for a toast.
+    titlesLabel(titles) {
+      return titles.length === 1 ? titles[0] : `${titles.length} titles`;
+    },
+
+    // libraryItems finds the current Library entries for { service, id,
+    // title } refs, so an Undo flips the toggles on screen even after the
+    // Library was re-read. A ref not in the Library is used as is.
+    libraryItems(refs) {
+      return refs.map((r) => this.library.find((it) => it.service === r.service && it.id === r.id) || r);
+    },
+
+    // A toast follows the finger sideways, and leaves off whichever side
+    // past 80px; short of that it springs back.
+    toastDown(e) {
+      if (e.target.closest('button')) return; // Undo is a tap, not a swipe
+      e.currentTarget.setPointerCapture(e.pointerId);
+      this.toastFrom = e.clientX;
+      e.currentTarget.style.transition = 'none';
+    },
+
+    toastMove(e) {
+      if (this.toastFrom == null) return;
+      const dx = e.clientX - this.toastFrom;
+      e.currentTarget.style.transform = `translateX(${dx}px)`;
+      e.currentTarget.style.opacity = String(Math.max(0, 1 - Math.abs(dx) / 240));
+    },
+
+    toastUp(e) {
+      if (this.toastFrom == null) return;
+      const el = e.currentTarget;
+      const dx = e.clientX - this.toastFrom;
+      this.toastFrom = null;
+      el.style.transition = 'transform .18s ease, opacity .18s ease';
+      if (Math.abs(dx) < 80) {
+        el.style.transform = '';
+        el.style.opacity = '';
+        return;
+      }
+      el.style.transform = `translateX(${dx < 0 ? '-' : ''}120vw)`;
+      el.style.opacity = '0';
+      const id = this.toast?.id;
+      setTimeout(() => {
+        if (this.toast?.id !== id) return;
+        clearTimeout(this.toastAway);
+        this.toast = null;
+      }, 180);
     },
 
     // --- Confirmation dialog --------------------------------------------
@@ -423,10 +510,9 @@ function App() {
       if (this.tab === 'library' && !initial) this.loadLibrary();
     },
 
-    // keepError keeps the message already shown (a refused unkeep) through the re-read.
-    async loadLibrary(keepError = false) {
+    async loadLibrary() {
       this.libraryLoading = true;
-      if (!keepError) this.libraryError = '';
+      this.libraryError = '';
       try {
         const res = await fetch('/api/library');
         const data = await res.json().catch(() => ({}));
@@ -471,6 +557,8 @@ function App() {
       const before = items.map((it) => it.kept);
       for (const it of items) it.kept = keep;
       if (keep) {
+        // Whoever keeps a title may unkeep it again.
+        for (const it of items) it.can_unkeep = true;
         this.due = this.due.filter((d) => !refs.has(`${d.arr_service}:${d.arr_id}`));
         this.selected = this.selected.filter((id) => this.due.some((d) => d.id === id));
       }
@@ -487,16 +575,21 @@ function App() {
         if (!res.ok) throw new Error(data.error || 'Update failed.');
         if ((data.refused || []).length) {
           // Some of it was someone else's to unkeep: re-read to show the truth.
-          this.libraryError = 'Only whoever kept this, or an admin, can unkeep it.';
-          await Promise.all([this.loadLibrary(true), this.loadDue()]);
+          this.showError('Only whoever kept this, or an admin, can unkeep it.');
+          await Promise.all([this.loadLibrary(), this.loadDue()]);
           return;
         }
+        this.showToast({
+          text: keep ? 'Kept' : 'Unkept',
+          title: this.titlesLabel(items.map((it) => it.title)),
+          undo: () => this.setKept(this.libraryItems(items), !keep),
+        });
         // The backend has already updated its due list before responding.
         await this.loadDue();
       } catch (err) {
         items.forEach((it, i) => { it.kept = before[i]; });
-        this.libraryError = err.message;
-        await Promise.all([this.loadLibrary(true), this.loadDue()]);
+        this.showError(err.message);
+        await Promise.all([this.loadLibrary(), this.loadDue()]);
       } finally {
         this.libraryBusy = false;
       }
@@ -511,7 +604,6 @@ function App() {
       })) return;
 
       this.deletingID = item.id;
-      this.dueError = '';
       try {
         const res = await fetch('/api/due/delete', {
           method: 'POST',
@@ -522,9 +614,10 @@ function App() {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error || 'Delete failed.');
         }
+        this.showToast({ text: 'Deleted', title: item.title });
         await this.loadDue();
       } catch (err) {
-        this.dueError = err.message;
+        this.showError(err.message);
       } finally {
         this.deletingID = null;
       }

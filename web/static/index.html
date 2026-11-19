@@ -93,7 +93,6 @@
         </button>
       </div>
       <p class="error-text" v-if="dueError">{{ dueError }}</p>
-      <p class="ok-text" v-if="deleteResult">{{ deleteResult }}</p>
 
       <div class="card table-card" v-if="due.length">
         <div class="table">
@@ -413,6 +412,19 @@
         <button class="btn btn-ghost" @click="closeDialog(false)">Cancel</button>
         <button class="btn btn-confirm" @click="closeDialog(true)">{{ dialog.confirmLabel }}</button>
       </div>
+    </div>
+  </div>
+
+  <!-- What an action just did, swiped off either side to dismiss. A list of
+       at most one, keyed by id, so a new toast is a fresh element and never
+       inherits a swiped-away one's offset. -->
+  <div class="toasts">
+    <div class="toast" v-for="t in (toast ? [toast] : [])" :key="t.id" :class="t.level"
+         :role="t.level === 'error' ? 'alert' : 'status'"
+         @pointerdown="toastDown($event)" @pointermove="toastMove($event)"
+         @pointerup="toastUp($event)" @pointercancel="toastUp($event)">
+      <span class="toast-text">{{ t.text }} <strong v-if="t.title">{{ t.title }}</strong></span>
+      <button type="button" class="toast-undo" v-if="t.undo" @click="undoToast">Undo</button>
     </div>
   </div>
 </div>
